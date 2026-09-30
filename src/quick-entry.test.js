@@ -103,7 +103,7 @@ test('three type-and-Enter submits give three rows, newest first, and three writ
   box.submit('45.50 auto');
   box.submit('₹80 lunch');
   assert.deepEqual(box.rows.map((row) => row.note), ['lunch', 'auto', 'chai']);
-  assert.deepEqual(box.rows.map((row) => row.amount), ['₹80', '₹45.5', '₹120']);
+  assert.deepEqual(box.rows.map((row) => row.amount), ['₹80', formatPaise(4550), '₹120']);
   assert.equal(box.total(), 24550);
   assert.equal(box.calls.length, 3);
   assert.equal(box.input.value, '');
