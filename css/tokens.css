@@ -36,8 +36,9 @@
   --space-7: 48px;
 
   /* Derived tokens, built from the scales above */
-  --color-divider: color-mix(in srgb, var(--color-muted) 20%, transparent);
+  --color-divider: rgba(107, 116, 113, 0.2);                    /* muted at 20% */
   --radius-control: var(--space-3);                             /* 12px radius */
+  --radius-round: 50%;
   --control-min-height: var(--space-7);                         /* 48px tap target */
   --quick-entry-height: calc(var(--space-7) + var(--space-2));  /* 56px */
   --page-max-width: calc(var(--space-7) * 10);
@@ -48,4 +49,13 @@
   --leading-tight: 1.25;
   --leading-body: 1.5;
   --opacity-disabled: 0.6;
+  --opacity-opaque: 1;
+}
+
+/* Where color-mix() is supported, derive the divider from the muted token so
+   the two cannot drift. Older Android WebViews keep the rgba() above. */
+@supports (color: color-mix(in srgb, red 20%, transparent)) {
+  :root {
+    --color-divider: color-mix(in srgb, var(--color-muted) 20%, transparent);
+  }
 }

@@ -144,7 +144,7 @@ input {
 input::placeholder,
 textarea::placeholder {
   color: var(--color-muted);
-  opacity: 1;
+  opacity: var(--opacity-opaque);
 }
 
 input[type="search"]::-webkit-search-decoration,
@@ -185,7 +185,7 @@ input[type="radio"] {
 }
 
 input[type="radio"] {
-  border-radius: 50%;
+  border-radius: var(--radius-round);
 }
 
 input[type="checkbox"]:checked,
