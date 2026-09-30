@@ -296,10 +296,14 @@ test('opening the app on Today through the router focuses the entry box and load
   assert.match(parts['[data-today-view]'].innerHTML, /class="entry-list"/);
   assert.equal(parts['.today'].getAttribute('data-status'), 'filled');
 
+  let prevented = false;
   parts['#quick-entry'].value = '120 chai';
-  parts['[data-today-form]'].dispatch('submit', { preventDefault() {} });
+  parts['[data-today-form]'].dispatch('submit', { preventDefault() { prevented = true; } });
+  assert.equal(prevented, true, 'Enter goes through the quick-entry submit handler');
   assert.equal(parts['#quick-entry'].value, '');
-  assert.match(parts['[data-today-view]'].innerHTML, /data-today-total>₹1,610.50</);
+  assert.match(parts['[data-today-view]'].innerHTML,
+    /<ul class="entry-list" id="today-list"><li class="entry-row entry-new"><span class="entry-note">chai<\/span><span class="amount entry-amount">₹120</);
+  assert.match(parts['[data-today-view]'].innerHTML, /data-today-total>₹1,610.5</);
 });
 
 test('each forced state reaches its own view through the router and the stub', async () => {

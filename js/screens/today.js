@@ -13,7 +13,9 @@
  * are only shown once a load has succeeded: before that the ledger's sums
  * are not known, so the cards show a skeleton while loading and a dash after
  * a failed load, never a ₹0 or a part-sum that may not be true.
- * Amounts are integer paise and are only ever shown in rupees with ₹.
+ * Amounts are integer paise and are only ever shown in rupees with ₹, all
+ * through formatPaise() from src/format-amount.js, so a row, the totals, the
+ * live preview and the hints write the same amount the same way.
  * Strings are joined with + rather than template literals, so the only
  * currency sign anywhere in this file is ₹.
  */
@@ -21,10 +23,8 @@
 import { parseEntry } from '../../src/parse-entry.js';
 import { formatPaise } from '../../src/format-amount.js';
 import { QUICK_ENTRY_HINT, showHint, wireQuickEntry } from '../../src/quick-entry.js';
-import { formatRupees, totals } from '../../src/totals.js';
+import { totals } from '../../src/totals.js';
 import { loadEntries, saveEntry } from '../data/ledger.js';
-
-export { formatRupees };
 
 export const STATUSES = ['empty', 'loading', 'error', 'filled'];
 export const ERROR_MESSAGE = 'Today’s spends did not open.';
@@ -46,7 +46,7 @@ export function escapeHtml(value) {
    naming the spend so it can be typed again. `restored` is true when its
    text went back into the entry box. */
 export function saveFailedHint(entry, restored) {
-  const spend = formatRupees(entry.amountPaise) + (entry.note ? ' ' + entry.note : '');
+  const spend = formatPaise(entry.amountPaise) + (entry.note ? ' ' + entry.note : '');
   return spend + ' was not saved. ' + (restored ? 'Press Enter to try again.' : 'Type it again to save it.');
 }
 
@@ -99,7 +99,7 @@ function totalCard(key, label, paise, known) {
     value = '<span class="amount total-amount total-unknown" data-' + key + '-total aria-hidden="true">—</span>' +
       '<span class="visually-hidden">not known</span>';
   } else {
-    value = '<span class="amount total-amount" data-' + key + '-total>' + formatRupees(paise) + '</span>';
+    value = '<span class="amount total-amount" data-' + key + '-total>' + formatPaise(paise) + '</span>';
   }
   return '<p class="card total-card' + (key === 'today' ? ' total-card-today' : '') + '">' +
     '<span class="total-label">' + label + '</span>' +
@@ -200,9 +200,9 @@ export function renderToday(state = { status: 'loading' }) {
  * filled, rejected → error with Try again). Enter goes through
  * wireQuickEntry() in src/quick-entry.js: it adds the typed spend at the top
  * of #today-list and re-renders both totals in the same task, then hands the
- * spend to save(), which writes it to the on-device ledger, and clears the
- * box and keeps focus there. This submit handler is the one save path in the
- * app, so it is where the totals hook in. A save that fails takes the spend back out
+ * spend to save(), which writes it through add() in src/ledger.js, and clears
+ * the box and keeps focus there. This submit handler is the one save path in
+ * the app, so it is where the totals hook in. A save that fails takes the spend back out
  * of the list and totals, puts its text back in an empty box and names it in
  * the hint. Spends added here stay listed across Try again, above whatever
  * the load brings back, until the load returns their stored copy.
@@ -320,6 +320,8 @@ export function mountToday({
     );
   }
 
+  /* save() maps the screen's `timestamp` back to `createdAt` and writes
+     through add() in src/ledger.js (see saveEntry in js/data/ledger.js). */
   wireQuickEntry({
     form,
     input,
@@ -351,7 +353,7 @@ export function mountToday({
   input.addEventListener('input', () => {
     const text = input.value;
     const parsed = text.trim() === '' ? null : parseEntry(text);
-    if (parsed) setHint(formatRupees(parsed.amountPaise) + (parsed.note ? ' · ' + parsed.note : ''), false);
+    if (parsed) setHint(formatPaise(parsed.amountPaise) + (parsed.note ? ' · ' + parsed.note : ''), false);
     else setHint(ENTRY_HINT, false);
   });
 
