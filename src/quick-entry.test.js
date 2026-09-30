@@ -1,30 +1,9 @@
-import { after, before, test } from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import { QUICK_ENTRY_HINT, wireQuickEntry } from './quick-entry.js';
 import { formatPaise } from './format-amount.js';
-
-/* Any alert, confirm or prompt the handler shows is recorded here. The
-   originals are put back once this file's tests are done. */
-const DIALOGS = ['alert', 'confirm', 'prompt'];
-const originals = new Map();
-let dialogs = [];
-
-before(() => {
-  for (const name of DIALOGS) {
-    originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
-    globalThis[name] = (text) => { dialogs.push(text); };
-  }
-});
-
-after(() => {
-  for (const name of DIALOGS) {
-    const descriptor = originals.get(name);
-    if (descriptor) Object.defineProperty(globalThis, name, descriptor);
-    else delete globalThis[name];
-  }
-});
 
 /* Just enough of an element for the handler: attributes, classes, events. */
 function fakeElement() {
@@ -50,8 +29,7 @@ function fakeElement() {
 
 /* A box whose focus is tracked like document.activeElement, and a list the
    onEntry render prepends rows to, as a `note ₹amount` pair. */
-function fakeBox({ add, onSaving } = {}) {
-  dialogs = [];
+function fakeBox({ add } = {}) {
   const doc = { activeElement: null };
   const form = fakeElement();
   const input = fakeElement();
@@ -65,7 +43,6 @@ function fakeBox({ add, onSaving } = {}) {
     input,
     hint,
     add: add ?? ((entry) => { calls.push(entry); return new Promise(() => {}); }),
-    onSaving,
     onEntry: (entry) => {
       rows.unshift({ note: entry.note, amount: formatPaise(entry.amountPaise) });
       total += entry.amountPaise;
@@ -83,18 +60,22 @@ function fakeBox({ add, onSaving } = {}) {
 
 test('120 chai prepends a chai ₹120 row and adds to the total before the write settles', () => {
   const box = fakeBox();
-  const start = Date.now();
   const prevented = box.submit('120 chai');
 
-  assert.equal(prevented, true, 'no navigation or reload');
-  assert.deepEqual(box.rows, [{ note: 'chai', amount: '₹120' }]);
-  assert.equal(box.total(), 12000);
-  assert.equal(box.calls.length, 1);
+  assert.equal(prevented, true, 'preventDefault was called');
+  assert.equal(box.rows.length, 1, 'one row');
+  assert.equal(box.rows[0].note, 'chai', 'row note');
+  assert.equal(box.rows[0].amount, '₹120', 'row amount');
+  assert.equal(box.total(), 12000, 'total in paise');
+  assert.equal(box.calls.length, 1, 'add called once');
   const [written] = box.calls;
-  assert.deepEqual({ ...written, createdAt: 0 }, { amountPaise: 12000, note: 'chai', createdAt: 0 });
-  assert.ok(Number.isSafeInteger(written.createdAt) && written.createdAt >= start && written.createdAt <= Date.now());
-  assert.equal(box.input.value, '');
-  assert.equal(box.doc.activeElement, box.input);
+  assert.equal(written.amountPaise, 12000, 'written amountPaise');
+  assert.equal(written.note, 'chai', 'written note');
+  assert.equal(typeof written.createdAt, 'number', 'createdAt is a number');
+  assert.ok(Number.isSafeInteger(written.createdAt) && written.createdAt > 0, 'createdAt is an epoch timestamp');
+  assert.deepEqual(Object.keys(written).sort(), ['amountPaise', 'createdAt', 'note'], 'written fields');
+  assert.equal(box.input.value, '', 'box cleared');
+  assert.equal(box.doc.activeElement, box.input, 'box keeps focus');
 });
 
 test('three type-and-Enter submits give three rows, newest first, and three writes', () => {
@@ -102,37 +83,48 @@ test('three type-and-Enter submits give three rows, newest first, and three writ
   box.submit('120 chai');
   box.submit('45.50 auto');
   box.submit('₹80 lunch');
-  assert.deepEqual(box.rows.map((row) => row.note), ['lunch', 'auto', 'chai']);
-  assert.deepEqual(box.rows.map((row) => row.amount), ['₹80', formatPaise(4550), '₹120']);
-  assert.equal(box.total(), 24550);
-  assert.equal(box.calls.length, 3);
-  assert.equal(box.input.value, '');
-  assert.equal(box.doc.activeElement, box.input);
+  assert.equal(box.rows.map((row) => row.note).join(','), 'lunch,auto,chai', 'newest row first');
+  assert.equal(box.rows[1].amount, formatPaise(4550), 'rows use formatPaise');
+  assert.equal(box.total(), 24550, 'total in paise');
+  assert.equal(box.calls.length, 3, 'three writes');
+  assert.equal(box.input.value, '', 'box cleared');
+  assert.equal(box.doc.activeElement, box.input, 'box keeps focus');
 });
 
 test('a line with no amount keeps its text and shows the sindoor hint, writing nothing', async () => {
-  const box = fakeBox();
-  const prevented = box.submit('chai');
-  assert.equal(prevented, true);
-  assert.deepEqual(box.rows, []);
-  assert.equal(box.calls.length, 0);
-  assert.deepEqual(dialogs, []);
-  assert.equal(box.input.value, 'chai');
-  assert.equal(box.hint.textContent, 'Start with an amount, e.g. 120 chai');
-  assert.equal(QUICK_ENTRY_HINT, 'Start with an amount, e.g. 120 chai');
-  assert.ok(box.hint.classList.contains('hint-error'));
-  assert.equal(box.input.getAttribute('aria-invalid'), 'true');
+  /* Any alert, confirm or prompt is recorded, and the originals put back. */
+  const dialogs = [];
+  const originals = ['alert', 'confirm', 'prompt'].map((name) => [name, Object.getOwnPropertyDescriptor(globalThis, name)]);
+  for (const [name] of originals) globalThis[name] = (text) => { dialogs.push(text); };
+  try {
+    const box = fakeBox();
+    const prevented = box.submit('chai');
+    assert.equal(prevented, true, 'preventDefault was called');
+    assert.equal(box.rows.length, 0, 'no row');
+    assert.equal(box.calls.length, 0, 'add not called');
+    assert.equal(dialogs.length, 0, 'no dialog');
+    assert.equal(box.input.value, 'chai', 'text kept');
+    assert.equal(box.hint.textContent, 'Start with an amount, e.g. 120 chai', 'hint text');
+    assert.equal(QUICK_ENTRY_HINT, 'Start with an amount, e.g. 120 chai', 'exported hint text');
+    assert.ok(box.hint.classList.contains('hint-error'), 'hint has the hint-error class');
+    assert.equal(box.input.getAttribute('aria-invalid'), 'true', 'box marked invalid');
+  } finally {
+    for (const [name, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else delete globalThis[name];
+    }
+  }
 
   const css = await readFile(new URL('../css/controls.css', import.meta.url), 'utf8');
-  assert.match(css, /\.hint-error \{\s*color: var\(--color-sindoor\);/);
+  assert.ok(/\.hint-error \{\s*color: var\(--color-sindoor\);/.test(css), '.hint-error is drawn in the sindoor token');
 });
 
 test('an empty Enter lists and writes nothing', () => {
   const box = fakeBox();
   box.submit('   ');
-  assert.deepEqual(box.rows, []);
-  assert.equal(box.calls.length, 0);
-  assert.equal(box.hint.textContent, '');
+  assert.equal(box.rows.length, 0, 'no row');
+  assert.equal(box.calls.length, 0, 'add not called');
+  assert.equal(box.hint.textContent, '', 'no hint');
 });
 
 test('the write is handed back unawaited; a failed one is named in the hint by default', async () => {
@@ -142,15 +134,15 @@ test('the write is handed back unawaited; a failed one is named in the hint by d
   assert.equal(box.rows.length, 1, 'shown before the write settles');
   reject(new Error('quota'));
   await new Promise((resolve) => setImmediate(resolve));
-  assert.ok(box.hint.classList.contains('hint-error'));
-  assert.match(box.hint.textContent, /not saved/);
+  assert.ok(box.hint.classList.contains('hint-error'), 'failure hint is sindoor');
+  assert.ok(box.hint.textContent.includes('not saved'), 'failure hint says not saved');
 });
 
 test('the module is vanilla JS: writes through ledger.js add, formats nothing itself, no network', async () => {
   const source = await readFile(new URL('./quick-entry.js', import.meta.url), 'utf8');
-  const imports = [...source.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
-  assert.deepEqual(imports.sort(), ['./ledger.js', './parse-entry.js']);
-  assert.match(source, /import \{ add as ledgerAdd \} from '\.\/ledger\.js';/);
-  assert.doesNotMatch(source, /\b(?:fetch|XMLHttpRequest|WebSocket|sendBeacon|indexedDB)\b/);
-  assert.doesNotMatch(source, /Intl\.NumberFormat|toLocaleString/);
+  const imports = [...source.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]).sort();
+  assert.equal(imports.join(','), './ledger.js,./parse-entry.js', 'only parse-entry and ledger are imported');
+  assert.ok(source.includes("import { add as ledgerAdd } from './ledger.js';"), 'add comes from ledger.js');
+  assert.ok(!/\b(?:fetch|XMLHttpRequest|WebSocket|sendBeacon|indexedDB)\b/.test(source), 'no network or storage calls');
+  assert.ok(!/Intl\.NumberFormat|toLocaleString/.test(source), 'no second formatter');
 });

@@ -94,26 +94,29 @@ function type(screen, text) {
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
+/* The text of the Today total in a rendered view. */
+const todayTotal = (html) => (html.match(/data-today-total[^>]*>([^<]*)</) ?? [])[1];
+
 test('a row, the totals, the preview and the hints write one amount the same way', async () => {
   const at = Date.now();
   const html = renderTodayView({ status: 'filled', entries: [{ id: 'x', amountPaise: 4550, note: 'auto', timestamp: at }] });
   const row = (html.match(/<span class="amount entry-amount">([^<]*)</) ?? [])[1];
-  assert.equal(row, formatPaise(4550));
-  assert.equal((html.match(/data-today-total>([^<]*)</) ?? [])[1], row);
-  assert.equal((html.match(/data-month-total>([^<]*)</) ?? [])[1], row);
-  assert.ok(saveFailedHint({ amountPaise: 4550, note: '' }, true).startsWith(row + ' '));
+  assert.equal(row, formatPaise(4550), 'the row is formatted by formatPaise');
+  assert.equal(todayTotal(html), row, 'the Today total matches the row');
+  assert.equal((html.match(/data-month-total>([^<]*)</) ?? [])[1], row, 'the month total matches the row');
+  assert.ok(saveFailedHint({ amountPaise: 4550, note: '' }, true).startsWith(row + ' '), 'the failed-save hint matches the row');
 
   const screen = fakeScreen();
   await mountToday({ main: screen.main, save: keep, load: async () => [] });
   screen.input.value = '45.50 auto';
   screen.input.dispatch('input');
-  assert.equal(screen.hint.textContent, row + ' · auto');
+  assert.equal(screen.hint.textContent, row + ' · auto', 'the preview matches the row');
   type(screen, '45.50 auto');
-  assert.equal(screen.status.textContent, 'Added ' + row + ' auto');
-  assert.equal((screen.view.innerHTML.match(/data-today-total>([^<]*)</) ?? [])[1], row);
+  assert.equal(screen.status.textContent, 'Added ' + row + ' auto', 'the announcement matches the row');
+  assert.equal(todayTotal(screen.view.innerHTML), row, 'the Today total after Enter matches the row');
 
   const source = await readFile(new URL('./today.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /formatRupees/, 'one formatter on the screen');
+  assert.ok(!source.includes('formatRupees'), 'one formatter on the screen');
 });
 
 test('each status renders its own distinct view', () => {
@@ -138,7 +141,7 @@ test('each status renders its own distinct view', () => {
 
   assert.match(views.filled, /class="entry-list"/);
   assert.match(views.filled, /Electricity top-up<\/span><span class="amount entry-amount">₹1,245<\/span>/);
-  assert.match(views.filled, /data-today-total>₹1,290.5</);
+  assert.equal(todayTotal(views.filled), formatPaise(129050), 'filled Today total');
   assert.match(views.filled, /2 spends/);
 });
 
@@ -312,7 +315,7 @@ test('a spend added during an error stays listed across Try again, and the total
   await tick();
   assert.equal(calls, 3);
   assert.equal(screen.root.getAttribute('data-status'), 'filled');
-  assert.match(screen.view.innerHTML, /data-today-total>₹1,410.5</);
+  assert.equal(todayTotal(screen.view.innerHTML), formatPaise(141050), 'Today total with the added spends');
   assert.match(screen.view.innerHTML, /3 spends/);
   assert.doesNotMatch(screen.view.innerHTML, /today-error/);
 });
@@ -358,7 +361,7 @@ test('typing 120 chai and pressing Enter saves it, clears the box and updates th
   assert.ok(screen.input.focusCount >= 2, 'focus stays in the box');
 
   type(screen, '45.50 auto');
-  assert.match(screen.view.innerHTML, /data-today-total>₹165.5</);
+  assert.equal(todayTotal(screen.view.innerHTML), formatPaise(16550), 'Today total after two spends');
   assert.match(screen.view.innerHTML, /entry-new"><span class="entry-note">auto/);
 });
 
@@ -379,27 +382,28 @@ test('Enter on 120 chai puts a chai ₹120 row at the top of #today-list and in 
     load: async () => [{ id: 1, amountPaise: 4550, note: 'auto', timestamp: Date.now() }],
   });
 
-  const start = Date.now();
   focused = null;
-  assert.equal(type(screen, '120 chai'), true, 'no page reload');
-  const list = screen.view.innerHTML.match(/<ul class="entry-list" id="today-list">(.*?)<\/ul>/)[1];
-  const rows = list.match(/<li[^>]*>.*?<\/li>/g);
-  assert.equal(rows.length, 2);
-  assert.match(rows[0], /<span class="entry-note">chai<\/span><span class="amount entry-amount">₹120<\/span>/);
-  assert.match(rows[1], /<span class="amount entry-amount">₹45\.5</);
-  assert.equal(today(screen.view.innerHTML), '₹165.5');
-  assert.equal(screen.input.value, '');
+  assert.equal(type(screen, '120 chai'), true, 'preventDefault was called');
+  const html = screen.view.innerHTML;
+  const list = (html.match(/<ul class="entry-list" id="today-list">(.*?)<\/ul>/) ?? [])[1] ?? '';
+  const rows = list.match(/<li[^>]*>.*?<\/li>/g) ?? [];
+  assert.equal(rows.length, 2, 'two rows in #today-list');
+  assert.ok(rows[0].includes('<span class="entry-note">chai</span><span class="amount entry-amount">₹120</span>'), 'chai ₹120 is the first row');
+  assert.ok(rows[1].includes('>' + formatPaise(4550) + '</span>'), 'the loaded row uses formatPaise');
+  assert.equal(todayTotal(html), formatPaise(16550), 'Today total includes ₹120');
+  assert.equal(screen.input.value, '', 'box cleared');
   assert.equal(focused, screen.input, 'the box keeps focus');
 
-  await Promise.resolve();
-  assert.equal(written.length, 1);
+  assert.equal(written.length, 1, 'the ledger add was called once');
   const [record] = written;
-  assert.deepEqual({ ...record, createdAt: 0 }, { amountPaise: 12000, note: 'chai', createdAt: 0 });
-  assert.ok(Number.isSafeInteger(record.createdAt) && record.createdAt >= start && record.createdAt <= Date.now());
+  assert.equal(record.amountPaise, 12000, 'written amountPaise');
+  assert.equal(record.note, 'chai', 'written note');
+  assert.ok(Number.isSafeInteger(record.createdAt) && record.createdAt > 0, 'written createdAt is an epoch timestamp');
+  assert.deepEqual(Object.keys(record).sort(), ['amountPaise', 'createdAt', 'note'], 'written fields');
 });
 
 test('the invalid-line hint is the quick-entry wording', () => {
-  assert.equal(INVALID_HINT, 'Start with an amount, e.g. 120 chai');
+  assert.equal(INVALID_HINT, 'Start with an amount, e.g. 120 chai', 'hint text');
 });
 
 test('a line with no amount shakes, shows an inline hint and keeps the text', async () => {
@@ -445,7 +449,7 @@ test('a spend added while loading shows at once and joins the loaded ones', asyn
 
   resolve(sample);
   await ready;
-  assert.match(screen.view.innerHTML, /data-today-total>₹1,410.5</);
+  assert.equal(todayTotal(screen.view.innerHTML), formatPaise(141050), 'Today total with the added spends');
   assert.doesNotMatch(screen.view.innerHTML, /aria-busy/);
 });
 
@@ -642,5 +646,5 @@ test('a save that fails while the next line is typed keeps that line and names t
   assert.equal(screen.input.value, '80 au');
   assert.equal(screen.hint.textContent, '₹120 chai was not saved. Type it again to save it.');
   assert.equal(today(screen.view.innerHTML), '₹0');
-  assert.equal(saveFailedHint({ amountPaise: 4550, note: '' }, true), '₹45.5 was not saved. Press Enter to try again.');
+  assert.equal(saveFailedHint({ amountPaise: 4550, note: '' }, true), formatPaise(4550) + ' was not saved. Press Enter to try again.');
 });

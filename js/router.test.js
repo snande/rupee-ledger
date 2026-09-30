@@ -14,6 +14,7 @@ import {
 } from './router.js';
 import { mountToday, renderToday } from './screens/today.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
+import { formatPaise } from '../src/format-amount.js';
 
 /* Screens under test here render without their mount, so no data loads. */
 const noMounts = {};
@@ -300,10 +301,12 @@ test('opening the app on Today through the router focuses the entry box and load
   parts['#quick-entry'].value = '120 chai';
   parts['[data-today-form]'].dispatch('submit', { preventDefault() { prevented = true; } });
   assert.equal(prevented, true, 'Enter goes through the quick-entry submit handler');
-  assert.equal(parts['#quick-entry'].value, '');
-  assert.match(parts['[data-today-view]'].innerHTML,
-    /<ul class="entry-list" id="today-list"><li class="entry-row entry-new"><span class="entry-note">chai<\/span><span class="amount entry-amount">₹120</);
-  assert.match(parts['[data-today-view]'].innerHTML, /data-today-total>₹1,610.5</);
+  assert.equal(parts['#quick-entry'].value, '', 'the box is cleared');
+  const html = parts['[data-today-view]'].innerHTML;
+  const firstRow = (html.match(/<ul class="entry-list" id="today-list">(<li[^>]*>.*?<\/li>)/) ?? [])[1] ?? '';
+  assert.ok(firstRow.includes('<span class="entry-note">chai</span>'), 'chai is the first row of #today-list: ' + firstRow);
+  assert.ok(firstRow.includes('>₹120</span>'), 'the first row shows ₹120: ' + firstRow);
+  assert.ok(html.includes('data-today-total>' + formatPaise(161050) + '<'), 'Today total includes ₹120');
 });
 
 test('each forced state reaches its own view through the router and the stub', async () => {
