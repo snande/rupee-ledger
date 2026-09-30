@@ -3,156 +3,10 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import * as ledger from './ledger.js';
-import { add, listByDay, closeLedger, SCHEMA_VERSION, UnknownSchemaVersionError } from './ledger.js';
+import { add, listByDay, listByMonth, closeLedger, SCHEMA_VERSION, UnknownSchemaVersionError } from './ledger.js';
 import { openLedger, addEntry } from './ledger/store.js';
 
-// Node has no IndexedDB, so the tests drive the ledger through a small
-// in-memory stand-in covering the parts of IndexedDB's contract the module
-// relies on: databases outlive connections, requests and transaction events
-// fire asynchronously, writes land only when the transaction commits and
-// `oncomplete` fires after that, and an index `getAll` honours an
-// `IDBKeyRange` and skips records whose key is not a valid number.
-function createFakeIndexedDB() {
-  const databases = new Map();
-  const fake = { databases, transactions: [], commitGate: null, failNext: null, open };
-  const later = (fn) => setTimeout(fn, 0);
-
-  function open(name, version) {
-    const request = { result: undefined, error: null };
-    later(() => {
-      let database = databases.get(name);
-      if (!database) {
-        database = { name, version: 0, stores: new Map() };
-        databases.set(name, database);
-      }
-      const oldVersion = database.version;
-      const db = connect(database);
-      request.result = db;
-      if (version > oldVersion) {
-        database.version = version;
-        db.upgrading = true;
-        request.onupgradeneeded?.({ oldVersion, newVersion: version, target: request });
-        db.upgrading = false;
-      }
-      request.onsuccess?.({ target: request });
-    });
-    return request;
-  }
-
-  function connect(database) {
-    const db = {
-      name: database.name,
-      closed: false,
-      upgrading: false,
-      onversionchange: null,
-      close() {
-        db.closed = true;
-      },
-      createObjectStore(storeName, { keyPath = null, autoIncrement = false } = {}) {
-        if (!db.upgrading) throw new Error('InvalidStateError: not in a versionchange transaction');
-        const store = { keyPath, autoIncrement, nextKey: 1, records: new Map(), indexes: new Map() };
-        database.stores.set(storeName, store);
-        return {
-          createIndex(indexName, indexKeyPath) {
-            store.indexes.set(indexName, indexKeyPath);
-          },
-        };
-      },
-      transaction(storeName, mode = 'readonly', options = {}) {
-        if (db.closed) throw new Error('InvalidStateError: the connection is closed');
-        const store = database.stores.get(storeName);
-        if (!store) throw new Error(`NotFoundError: no object store ${storeName}`);
-        return transaction(store, mode, options);
-      },
-    };
-    return db;
-  }
-
-  function transaction(store, mode, options) {
-    const tx = {
-      mode,
-      options,
-      requests: [],
-      staged: [],
-      error: null,
-      oncomplete: null,
-      onerror: null,
-      onabort: null,
-      objectStore: () => objectStore(tx, store),
-    };
-    fake.transactions.push(tx);
-    later(() => run(tx));
-    return tx;
-  }
-
-  function objectStore(tx, store) {
-    return {
-      add(value) {
-        if (tx.mode !== 'readwrite') throw new Error('ReadOnlyError');
-        return queue(tx, 'add', () => {
-          const key = store.nextKey++;
-          const stored = structuredClone({ ...value, [store.keyPath]: key });
-          tx.staged.push(() => store.records.set(key, stored));
-          return key;
-        });
-      },
-      index(indexName) {
-        const keyPath = store.indexes.get(indexName);
-        if (keyPath === undefined) throw new Error(`NotFoundError: no index ${indexName}`);
-        return {
-          getAll(range) {
-            return queue(tx, 'getAll', () =>
-              [...store.records.entries()]
-                .filter(([, record]) => typeof record[keyPath] === 'number')
-                .filter(([, record]) => range === undefined || range.includes(record[keyPath]))
-                .sort(([keyA, a], [keyB, b]) => a[keyPath] - b[keyPath] || keyA - keyB)
-                .map(([, record]) => structuredClone(record)),
-            );
-          },
-        };
-      },
-    };
-  }
-
-  function queue(tx, kind, perform) {
-    const request = { kind, result: undefined, error: null, onsuccess: null, onerror: null, perform };
-    tx.requests.push(request);
-    return request;
-  }
-
-  async function run(tx) {
-    for (const request of tx.requests) {
-      if (tx.mode === 'readwrite' && fake.failNext === 'abort') {
-        fake.failNext = null;
-        tx.error = Object.assign(new Error('Quota exceeded.'), { name: 'QuotaExceededError' });
-        tx.onabort?.({ target: tx });
-        return;
-      }
-      request.result = request.perform();
-      request.onsuccess?.({ target: request });
-      await new Promise(later);
-    }
-    if (fake.commitGate) await fake.commitGate;
-    for (const write of tx.staged) write();
-    later(() => tx.oncomplete?.({ target: tx }));
-  }
-
-  return fake;
-}
-
-const FakeIDBKeyRange = {
-  bound(lower, upper, lowerOpen = false, upperOpen = false) {
-    return {
-      lower,
-      upper,
-      lowerOpen,
-      upperOpen,
-      includes(key) {
-        return (lowerOpen ? key > lower : key >= lower) && (upperOpen ? key < upper : key <= upper);
-      },
-    };
-  },
-};
+import { createFakeIndexedDB, FakeIDBKeyRange } from './ledger/fake-indexeddb.js';
 
 let fake;
 
@@ -288,6 +142,39 @@ test('listByDay reports an unversioned record, such as one from addEntry, as unk
   assert.deepEqual(await listByDay(createdAt + 24 * 60 * 60 * 1000), []);
 });
 
+test('listByMonth returns only entries in that local calendar month, oldest first', async () => {
+  const at = (month, day, hours, minutes = 0, seconds = 0, ms = 0) =>
+    new Date(2026, month, day, hours, minutes, seconds, ms).getTime();
+  await add({ amountPaise: 100, note: 'last of August', createdAt: at(7, 31, 23, 59, 59, 999) });
+  await add({ amountPaise: 200, note: 'today', createdAt: at(8, 30, 9) });
+  await add({ amountPaise: 300, note: 'first of September', createdAt: at(8, 1, 0) });
+  await add({ amountPaise: 400, note: 'first of October', createdAt: at(9, 1, 0) });
+
+  assert.deepEqual(
+    (await listByMonth(new Date(2026, 8, 30, 18))).map((entry) => entry.note),
+    ['first of September', 'today'],
+  );
+  assert.deepEqual((await listByMonth(at(7, 2, 12))).map((entry) => entry.note), ['last of August']);
+  assert.deepEqual(await listByMonth(new Date(2026, 11, 5)), []);
+  assert.equal(fake.transactions.at(-1).mode, 'readonly');
+});
+
+test('listByMonth rejects an unknown or missing schema version instead of misreading it', async () => {
+  const createdAt = new Date(2026, 8, 3, 10).getTime();
+  await add({ amountPaise: 12000, note: 'chai', createdAt });
+  await putRaw({ schemaVersion: 2, amountRupees: 45, memo: 'from the future', createdAt: createdAt + 1 });
+  await addEntry({ amount: 80, note: 'auto', createdAt: createdAt + 2 });
+
+  await assert.rejects(listByMonth(new Date(2026, 8, 30)), (error) => {
+    assert.ok(error instanceof UnknownSchemaVersionError);
+    assert.deepEqual(error.records, [{ id: 2, schemaVersion: 2 }, { id: 3, schemaVersion: undefined }]);
+    return true;
+  });
+  for (const date of [undefined, 'this month', new Date('nope')]) {
+    await assert.rejects(listByMonth(date), Error);
+  }
+});
+
 test('add refuses amounts that are not a positive whole number of paise, without writing', async () => {
   for (const amountPaise of [0, -100, 12.5, Number.NaN, Infinity, '12000', null, undefined, 12000n, 2 ** 53]) {
     await assert.rejects(add({ amountPaise, note: 'bad' }), Error, `amountPaise ${String(amountPaise)}`);
@@ -313,6 +200,7 @@ test('the module offers no delete, overwrite or merge operation', () => {
     'add',
     'closeLedger',
     'listByDay',
+    'listByMonth',
   ]);
 });
 
