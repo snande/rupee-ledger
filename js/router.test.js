@@ -17,6 +17,7 @@ import { renderNotFound, renderScreenError } from './screens/not-found.js';
 
 /* Screens under test here render without their mount, so no data loads. */
 const noMounts = {};
+const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 /* Just enough of an element for the router: attributes, innerHTML, focus. */
 function fakeElement(attributes = {}) {
@@ -175,11 +176,37 @@ test('isCurrent turns false after a second render into the same main only', () =
   assert.equal(contexts[2].isCurrent(), true);
 });
 
-test('a mount that throws leaves the screen error with Try again', () => {
+/* A main whose Try again button can be clicked, as the router wires it. */
+function mainWithReloadButton() {
   const main = fakeElement();
-  renderRoute({ main, hash: '#/today', mountTable: { today: () => { throw new Error('boom'); } } });
+  const button = { listener: null, addEventListener(type, fn) { if (type === 'click') this.listener = fn; } };
+  main.querySelector = (selector) => (selector === '[data-action="reload-screen"]' ? button : null);
+  return { main, button };
+}
+
+test('a mount that throws leaves the screen error, and its Try again runs the mount again', () => {
+  const { main, button } = mainWithReloadButton();
+  const tab = fakeElement({ 'data-route': 'today' });
+  let calls = 0;
+  const mountTable = {
+    today: () => {
+      calls += 1;
+      if (calls === 1) throw new Error('boom');
+    },
+  };
+
+  renderRoute({ main, links: [tab], hash: '#/today', mountTable });
+  assert.equal(calls, 1);
   assert.equal(main.innerHTML, renderScreenError());
+  assert.match(main.innerHTML, /class="card screen-error"/);
   assert.match(main.innerHTML, /data-action="reload-screen">Try again</);
+  assert.equal(main.focused, true);
+  assert.equal(typeof button.listener, 'function');
+
+  button.listener();
+  assert.equal(calls, 2);
+  assert.equal(main.innerHTML, renderToday());
+  assert.equal(tab.getAttribute('aria-current'), 'page');
 });
 
 test('a mount that rejects leaves the screen error, unless the screen moved on', async () => {
@@ -189,14 +216,14 @@ test('a mount that rejects leaves the screen error, unless the screen moved on',
 
   renderRoute({ main, hash: '#/today', mountTable });
   reject(new Error('late'));
-  await new Promise((resolve) => setImmediate(resolve));
+  await tick();
   assert.equal(main.innerHTML, renderScreenError());
 
   renderRoute({ main, hash: '#/today', mountTable });
   const stale = reject;
   renderRoute({ main, hash: '#/nope', mountTable });
   stale(new Error('stale'));
-  await new Promise((resolve) => setImmediate(resolve));
+  await tick();
   assert.equal(main.innerHTML, renderNotFound());
 });
 
@@ -213,4 +240,80 @@ test('startRouter forwards its mount table and lets a mount own focus', () => {
 
   win.navigate('#/nope');
   assert.equal(main.focused, true);
+});
+
+/* The parts of the Today screen the real mount looks up in <main>. */
+function todayMain() {
+  const part = () => {
+    const listeners = new Map();
+    const classes = new Set();
+    const attrs = new Map();
+    return {
+      innerHTML: '',
+      textContent: '',
+      value: '',
+      focusCount: 0,
+      getAttribute: (name) => (attrs.has(name) ? attrs.get(name) : null),
+      setAttribute: (name, value) => attrs.set(name, String(value)),
+      removeAttribute: (name) => attrs.delete(name),
+      classList: {
+        add: (name) => classes.add(name),
+        remove: (name) => classes.delete(name),
+        contains: (name) => classes.has(name),
+        toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)),
+      },
+      addEventListener: (type, fn) => listeners.set(type, fn),
+      dispatch: (type, event = {}) => listeners.get(type)?.(event),
+      focus() {
+        this.focusCount += 1;
+      },
+    };
+  };
+  const parts = {
+    '.today': part(),
+    '[data-today-view]': part(),
+    '[data-today-form]': part(),
+    '#quick-entry': part(),
+    '#quick-entry-hint': part(),
+    '[data-entry-status]': part(),
+  };
+  const main = fakeElement();
+  main.querySelector = (selector) => parts[selector] ?? null;
+  return { main, parts };
+}
+
+test('opening the app on Today through the router focuses the entry box and loads the forced state', async () => {
+  const { main, parts } = todayMain();
+  const win = fakeWindow('#/today?state=filled');
+  startRouter({ win, main });
+
+  assert.match(main.innerHTML, /<input class="quick-entry" id="quick-entry"/);
+  assert.equal(parts['#quick-entry'].focusCount, 1, 'entry box focused on open');
+  assert.equal(main.focused, false);
+  assert.match(parts['[data-today-view]'].innerHTML, /aria-busy="true"/);
+
+  await tick();
+  assert.match(parts['[data-today-view]'].innerHTML, /class="entry-list"/);
+  assert.equal(parts['.today'].getAttribute('data-status'), 'filled');
+
+  parts['#quick-entry'].value = '120 chai';
+  parts['[data-today-form]'].dispatch('submit', { preventDefault() {} });
+  assert.equal(parts['#quick-entry'].value, '');
+  assert.match(parts['[data-today-view]'].innerHTML, /data-today-total>₹1,610.50</);
+});
+
+test('each forced state reaches its own view through the router and the stub', async () => {
+  const seen = {};
+  for (const state of ['empty', 'filled', 'loading', 'error']) {
+    const { main, parts } = todayMain();
+    renderRoute({ main, hash: '#/today?state=' + state });
+    await tick();
+    seen[state] = parts['[data-today-view]'].innerHTML;
+    assert.equal(parts['.today'].getAttribute('data-status'), state, state);
+  }
+  assert.match(seen.empty, /today-empty/);
+  assert.match(seen.filled, /entry-list/);
+  assert.match(seen.loading, /aria-busy="true"/);
+  assert.match(seen.error, /data-action="retry">Try again</);
+  assert.equal(new Set(Object.values(seen)).size, 4);
 });

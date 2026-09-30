@@ -74,7 +74,8 @@ function ownMount(mountTable, name) {
 }
 
 /* A mount that throws or rejects leaves a styled error with Try again in
-   <main>, never a half-wired screen. */
+   <main>, never a half-wired screen. Try again renders the route afresh,
+   which runs the mount again. */
 function runMount(mount, context, retry) {
   const fail = () => {
     if (!context.isCurrent()) return;

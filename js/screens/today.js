@@ -45,6 +45,19 @@ export function totalPaise(entries) {
   return entries.reduce((sum, entry) => sum + (Number(entry.amountPaise) || 0), 0);
 }
 
+function normalise(state) {
+  const status = STATUSES.includes(state.status) ? state.status : 'loading';
+  const entries = Array.isArray(state.entries) ? state.entries : [];
+  return { status, entries };
+}
+
+/* What the screen shows as a whole: any listed spends make it 'filled',
+   even while a load is still pending or has failed below the list. */
+export function shownStatus(state = {}) {
+  const { status, entries } = normalise(state);
+  return entries.length > 0 ? 'filled' : status === 'filled' ? 'empty' : status;
+}
+
 function entryRow(entry, newestId) {
   const isNew = newestId !== undefined && newestId !== null && entry.id === newestId;
   const note = entry.note
@@ -104,8 +117,7 @@ function errorView(message) {
    listed whatever the status; loading and error add their block below, and
    a screen with no spends that is not loading or failing shows the prompt. */
 export function renderTodayView(state = {}) {
-  const status = STATUSES.includes(state.status) ? state.status : 'loading';
-  const entries = Array.isArray(state.entries) ? state.entries : [];
+  const { status, entries } = normalise(state);
   const parts = [];
   if (entries.length > 0) parts.push(listView(entries, state.newestId));
   if (status === 'loading') parts.push(loadingView(entries.length > 0));
@@ -114,9 +126,11 @@ export function renderTodayView(state = {}) {
   return parts.join('');
 }
 
+/* The router calls this with no state, so the screen opens on the skeleton;
+   mountToday starts the load in the same task and replaces it once the
+   promise settles. */
 export function renderToday(state = { status: 'loading' }) {
-  const status = STATUSES.includes(state.status) ? state.status : 'loading';
-  return '<div class="today" data-status="' + status + '">' +
+  return '<div class="today" data-status="' + shownStatus(state) + '">' +
     '<div class="today-view" data-today-view>' + renderTodayView(state) + '</div>' +
     '<form class="today-entry" data-today-form novalidate>' +
       '<label for="quick-entry">Add a spend</label>' +
@@ -136,9 +150,10 @@ export function renderToday(state = { status: 'loading' }) {
  * maps the promise onto the views (pending → loading, [] → empty, entries →
  * filled, rejected → error with Try again). Enter adds the typed spend at the
  * top and re-renders the total in the same task, clears the box and keeps
- * focus there. isCurrent() turns false once the router has replaced this
- * screen, so a late load writes nothing. Returns the first load's promise,
- * which never rejects.
+ * focus there. Spends added here stay listed across Try again, above
+ * whatever the load brings back. isCurrent() turns false once the router has
+ * replaced this screen, so a late load writes nothing. Returns the first
+ * load's promise, which never rejects.
  */
 export function mountToday({ main, query = new URLSearchParams(), isCurrent = () => true, load = loadEntries }) {
   const root = main.querySelector('.today');
@@ -160,9 +175,9 @@ export function mountToday({ main, query = new URLSearchParams(), isCurrent = ()
 
   const show = () => {
     if (!isCurrent()) return;
-    const entries = added.concat(loaded);
-    if (root) root.setAttribute('data-status', status === 'empty' && entries.length ? 'filled' : status);
-    view.innerHTML = renderTodayView({ status, entries, newestId });
+    const state = { status, entries: added.concat(loaded), newestId };
+    if (root) root.setAttribute('data-status', shownStatus(state));
+    view.innerHTML = renderTodayView(state);
   };
 
   const setHint = (text, invalid) => {
@@ -202,6 +217,7 @@ export function mountToday({ main, query = new URLSearchParams(), isCurrent = ()
       },
       () => {
         if (mine !== attempt) return;
+        loaded = [];
         status = 'error';
         show();
       },

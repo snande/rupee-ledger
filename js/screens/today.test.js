@@ -10,6 +10,7 @@ import {
   mountToday,
   renderToday,
   renderTodayView,
+  shownStatus,
 } from './today.js';
 
 const sample = [
@@ -79,6 +80,11 @@ function submit(form) {
   return prevented;
 }
 
+function type(screen, text) {
+  screen.input.value = text;
+  return submit(screen.form);
+}
+
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 test('formatRupees uses ₹ with Indian grouping and paise only when present', () => {
@@ -118,6 +124,18 @@ test('each status renders its own distinct view', () => {
   assert.match(views.filled, /2 spends/);
 });
 
+test('renderToday marks the screen with the status it shows', () => {
+  for (const status of ['empty', 'loading', 'error', 'filled']) {
+    const html = renderToday({ status, entries: status === 'filled' ? sample : [] });
+    assert.match(html, new RegExp('<div class="today" data-status="' + status + '">'));
+  }
+  assert.match(renderToday(), /data-status="loading"/);
+  assert.equal(shownStatus({ status: 'error', entries: sample }), 'filled');
+  assert.equal(shownStatus({ status: 'loading', entries: sample }), 'filled');
+  assert.equal(shownStatus({ status: 'empty', entries: sample }), 'filled');
+  assert.equal(shownStatus({ status: 'filled', entries: [] }), 'empty');
+});
+
 test('the error view shows a given message, escaped', () => {
   const html = renderTodayView({ status: 'error', message: 'Backup <b>broken</b>' });
   assert.match(html, /Backup &lt;b&gt;broken&lt;\/b&gt;/);
@@ -143,7 +161,6 @@ test('the screen carries a one-line text input and a submit button, and no other
     assert.match(html, /<label for="quick-entry">Add a spend<\/label>/);
     assert.doesNotMatch(html, /<(select|textarea)\b/);
     assert.equal((html.match(/<input\b/g) ?? []).length, 1);
-    assert.match(html, new RegExp('data-status="' + status + '"'));
   }
 });
 
@@ -171,10 +188,6 @@ test('every class the screen uses is styled from tokens in css/controls.css', as
   const used = new Set(html.match(/class="([^"]+)"/g).flatMap((m) => m.slice(7, -1).split(' ')));
   for (const name of used) {
     if (hooks.has(name)) continue;
-    if (name === 'amount' || name === 'hint' || name === 'card' || name.startsWith('button-')) {
-      assert.match(css, new RegExp('\\.' + name + '\\b'), name);
-      continue;
-    }
     assert.match(css, new RegExp('\\.' + name + '[\\s,{:.]'), 'no rule for .' + name);
   }
   const todaySection = css.slice(css.indexOf('Today screen'), css.indexOf('Tab bar'));
@@ -203,6 +216,7 @@ test('every tap target on the screen is at least 44 by 44 CSS pixels', async () 
   assert.match(rule('input'), /min-height: var\(--control-min-height\)/);
   assert.match(rule('.quick-entry'), /min-height: var\(--quick-entry-height\)/);
   assert.match(rule('.today-entry-row button'), /min-width: var\(--control-min-height\)/);
+  assert.match(rule('.today-cta'), /width: 100%/);
   assert.ok(px('--control-min-height') >= 44);
   assert.equal(px('--quick-entry-height'), 56);
 });
@@ -225,6 +239,7 @@ test('a load that resolves [] shows the empty view, and its call to action focus
   const screen = fakeScreen();
   await mountToday({ main: screen.main, load: async () => [] });
   assert.match(screen.view.innerHTML, /today-empty/);
+  assert.equal(screen.root.getAttribute('data-status'), 'empty');
   const before = screen.input.focusCount;
   clickAction(screen.view, 'focus-entry');
   assert.equal(screen.input.focusCount, before + 1);
@@ -240,12 +255,46 @@ test('a load that rejects shows the error view, and Try again loads again', asyn
   await mountToday({ main: screen.main, load });
   assert.match(screen.view.innerHTML, /today-error/);
   assert.match(screen.view.innerHTML, /Try again/);
+  assert.equal(screen.root.getAttribute('data-status'), 'error');
 
   clickAction(screen.view, 'retry');
   assert.equal(calls, 2);
   assert.match(screen.view.innerHTML, /aria-busy="true"/);
   await tick();
   assert.match(screen.view.innerHTML, /entry-list/);
+  assert.equal(screen.root.getAttribute('data-status'), 'filled');
+});
+
+test('a spend added during an error stays listed, with a correct total, across Try again', async () => {
+  const screen = fakeScreen();
+  let calls = 0;
+  const load = () => {
+    calls += 1;
+    if (calls === 1) return Promise.reject(new Error('disk'));
+    if (calls === 2) return Promise.reject(new Error('disk again'));
+    return Promise.resolve(sample);
+  };
+  await mountToday({ main: screen.main, load });
+
+  type(screen, '120 chai');
+  assert.equal(screen.root.getAttribute('data-status'), 'filled');
+  assert.match(screen.view.innerHTML, /data-today-total>₹120</);
+  assert.match(screen.view.innerHTML, /today-error/, 'the failed load is still reported');
+
+  clickAction(screen.view, 'retry');
+  await tick();
+  assert.equal(calls, 2);
+  assert.equal(screen.root.getAttribute('data-status'), 'filled');
+  assert.match(screen.view.innerHTML, /data-today-total>₹120</);
+  assert.match(screen.view.innerHTML, /today-error/);
+
+  clickAction(screen.view, 'retry');
+  await tick();
+  assert.equal(calls, 3);
+  assert.equal(screen.root.getAttribute('data-status'), 'filled');
+  assert.match(screen.view.innerHTML, /data-today-total>₹1,410.50</);
+  assert.match(screen.view.innerHTML, /3 spends/);
+  assert.doesNotMatch(screen.view.innerHTML, /today-error/);
 });
 
 test('a load that throws synchronously also shows the error view', async () => {
@@ -282,12 +331,12 @@ test('typing 120 chai and pressing Enter saves it, clears the box and updates th
   assert.equal(screen.input.value, '');
   assert.match(screen.view.innerHTML, /data-today-total>₹120</);
   assert.match(screen.view.innerHTML, /class="entry-row entry-new"><span class="entry-note">chai<\/span>/);
+  assert.equal(screen.root.getAttribute('data-status'), 'filled');
   assert.equal(screen.hint.textContent, ENTRY_HINT);
   assert.equal(screen.status.textContent, 'Added ₹120 chai');
   assert.ok(screen.input.focusCount >= 2, 'focus stays in the box');
 
-  screen.input.value = '45.50 auto';
-  submit(screen.form);
+  type(screen, '45.50 auto');
   assert.match(screen.view.innerHTML, /data-today-total>₹165.50</);
   assert.match(screen.view.innerHTML, /entry-new"><span class="entry-note">auto/);
 });
@@ -297,8 +346,7 @@ test('a line with no amount shakes, shows an inline hint and keeps the text', as
   await mountToday({ main: screen.main, load: async () => [] });
   const before = screen.view.innerHTML;
 
-  screen.input.value = 'chai';
-  submit(screen.form);
+  type(screen, 'chai');
   assert.equal(screen.input.value, 'chai');
   assert.equal(screen.input.getAttribute('aria-invalid'), 'true');
   assert.ok(screen.input.classList.contains('shake'));
@@ -319,8 +367,7 @@ test('an empty Enter does nothing', async () => {
   const screen = fakeScreen();
   await mountToday({ main: screen.main, load: async () => [] });
   const before = screen.view.innerHTML;
-  screen.input.value = '   ';
-  submit(screen.form);
+  type(screen, '   ');
   assert.equal(screen.view.innerHTML, before);
   assert.equal(screen.input.getAttribute('aria-invalid'), null);
 });
@@ -329,10 +376,10 @@ test('a spend added while loading shows at once and joins the loaded ones', asyn
   const screen = fakeScreen();
   let resolve;
   const ready = mountToday({ main: screen.main, load: () => new Promise((yes) => { resolve = yes; }) });
-  screen.input.value = '120 chai';
-  submit(screen.form);
+  type(screen, '120 chai');
   assert.match(screen.view.innerHTML, /data-today-total>₹120</);
   assert.match(screen.view.innerHTML, /aria-busy="true"/);
+  assert.equal(screen.root.getAttribute('data-status'), 'filled');
 
   resolve(sample);
   await ready;
