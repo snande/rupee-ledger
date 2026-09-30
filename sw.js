@@ -18,8 +18,10 @@
  * The ledger itself lives in IndexedDB, which this worker never touches.
  * Hand-written on purpose: no build step and nothing imported from a network.
  *
- * When a file is added, removed or renamed, update ASSETS and bump VERSION;
- * sw.test.js fails if ASSETS misses a file or lists one that does not exist.
+ * ASSETS holds exactly the modules js/app.js loads (following its imports),
+ * the stylesheets, the manifest and the icons; test-only helpers stay out.
+ * When one is added, removed or renamed, update ASSETS and bump VERSION;
+ * sw.test.js fails if ASSETS misses a file or lists one the app does not load.
  */
 
 const VERSION = 'v1';
@@ -35,12 +37,11 @@ const ASSETS = [
   './js/app.js',
   './js/router.js',
   './js/sw-register.js',
+  './js/data/ledger.js',
   './js/data/stub.js',
   './js/screens/not-found.js',
   './js/screens/today.js',
-  './src/format-amount.js',
   './src/ledger.js',
-  './src/ledger/boot.js',
   './src/ledger/store.js',
   './src/parse-entry.js',
   './src/totals.js',

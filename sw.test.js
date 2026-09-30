@@ -121,7 +121,7 @@ function request(path, { method = 'GET', mode = 'cors' } = {}) {
   return { url: new URL(path, SCOPE).href, method, mode };
 }
 
-/* Every file under `dir` (relative to the root), with test files skipped. */
+/* Every file under `dir` (relative to the root) that `keep` accepts. */
 function filesUnder(dir, keep) {
   const base = new URL(`./${dir}/`, ROOT);
   if (!existsSync(base)) return [];
@@ -133,14 +133,38 @@ function filesUnder(dir, keep) {
 
 const exists = (path) => existsSync(new URL(`./${path}`, ROOT));
 
+const STATIC_IMPORT = /^\s*(?:import|export)\s[^;]*?\sfrom\s*['"]([^'"]+)['"]|^\s*import\s*['"]([^'"]+)['"]/gm;
+
+/*
+ * Every module the page loads: the entry script index.html names, then each
+ * relative static import, followed recursively. Test-only helpers such as
+ * src/ledger/fake-indexeddb.js are never reached, so they are not required.
+ */
+function appModules() {
+  const html = readFileSync(new URL('./index.html', ROOT), 'utf8');
+  const entries = [...html.matchAll(/<script[^>]*\stype="module"[^>]*\ssrc="([^"]+)"/g)].map((m) => m[1]);
+  assert.ok(entries.length > 0, 'index.html loads no module script');
+  const seen = new Set();
+  const queue = [...entries];
+  while (queue.length) {
+    const path = queue.pop();
+    if (seen.has(path)) continue;
+    seen.add(path);
+    const source = readFileSync(new URL(`./${path}`, ROOT), 'utf8');
+    for (const [, from, bare] of source.matchAll(STATIC_IMPORT)) {
+      const specifier = from ?? bare;
+      if (specifier.startsWith('.')) queue.push(new URL(specifier, new URL(`./${path}`, ROOT)).href.slice(ROOT.href.length));
+    }
+  }
+  return [...seen].sort();
+}
+
 function requiredAssets() {
-  const code = (path) => path.endsWith('.js') && !path.endsWith('.test.js');
   return [
     'index.html',
     'manifest.webmanifest',
     ...filesUnder('css', (path) => path.endsWith('.css')),
-    ...filesUnder('js', code),
-    ...filesUnder('src', code),
+    ...appModules(),
     ...filesUnder('icons', () => true),
   ];
 }
