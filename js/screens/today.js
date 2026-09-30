@@ -1,19 +1,26 @@
 /*
- * The Today screen: today's spends above a quick-entry box pinned at the
- * bottom. renderToday(state) returns the whole screen for the router to put
- * into <main>; mountToday() then loads the entries and keeps the view in step
+ * The Today screen: the Today and This month total cards, today's spends
+ * under them and a quick-entry box pinned at the bottom. renderToday(state)
+ * returns the whole screen for the router to put into <main>; mountToday()
+ * then loads the entries from the on-device ledger and keeps the view in step
  * with the load and with every spend typed in.
  *
  * State: { status: 'empty' | 'loading' | 'error' | 'filled',
- *          entries?: [{ id, amountPaise, note }], message?: string }.
+ *          entries?: [{ id, amountPaise, note, timestamp }], message?: string,
+ *          now?: Date }.
+ * `entries` is every known entry; the totals are summed from all of them and
+ * the list shows the ones dated today, on the device's calendar. The totals
+ * are only shown once a load has succeeded: before that the ledger's sums
+ * are not known, so the cards show a skeleton while loading and a dash after
+ * a failed load, never a ₹0 or a part-sum that may not be true.
  * Amounts are integer paise and are only ever shown in rupees with ₹.
  * Strings are joined with + rather than template literals, so the only
  * currency sign anywhere in this file is ₹.
  */
 
 import { parseEntry } from '../../src/parse-entry.js';
-import { formatRupees } from '../../src/totals.js';
-import { loadEntries } from '../data/stub.js';
+import { formatRupees, totals } from '../../src/totals.js';
+import { loadEntries, saveEntry } from '../data/ledger.js';
 
 export { formatRupees };
 
@@ -33,21 +40,39 @@ export function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-export function totalPaise(entries) {
-  return entries.reduce((sum, entry) => sum + (Number(entry.amountPaise) || 0), 0);
+/* What the hint and the announcer say when a spend could not be stored,
+   naming the spend so it can be typed again. `restored` is true when its
+   text went back into the entry box. */
+export function saveFailedHint(entry, restored) {
+  const spend = formatRupees(entry.amountPaise) + (entry.note ? ' ' + entry.note : '');
+  return spend + ' was not saved. ' + (restored ? 'Press Enter to try again.' : 'Type it again to save it.');
+}
+
+/* True when the entry is dated on the same local calendar day as `now`. It
+   reads the same `timestamp`, falling back to `ts`, that totals() in
+   src/totals.js sums by, so the list and the Today total always agree. An
+   entry without a usable date is not today's, as it counts in no total. */
+export function isToday(entry, now = new Date()) {
+  const at = new Date(entry?.timestamp ?? entry?.ts ?? NaN);
+  if (Number.isNaN(at.getTime())) return false;
+  return at.getFullYear() === now.getFullYear() &&
+    at.getMonth() === now.getMonth() &&
+    at.getDate() === now.getDate();
 }
 
 function normalise(state) {
   const status = STATUSES.includes(state.status) ? state.status : 'loading';
   const entries = Array.isArray(state.entries) ? state.entries : [];
-  return { status, entries };
+  const now = state.now instanceof Date ? state.now : new Date();
+  const listed = entries.filter((entry) => isToday(entry, now));
+  return { status, entries, listed, now };
 }
 
-/* What the screen shows as a whole: any listed spends make it 'filled',
-   even while a load is still pending or has failed below the list. */
+/* What the screen shows as a whole: any spends listed for today make it
+   'filled', even while a load is still pending or has failed below the list. */
 export function shownStatus(state = {}) {
-  const { status, entries } = normalise(state);
-  return entries.length > 0 ? 'filled' : status === 'filled' ? 'empty' : status;
+  const { status, listed } = normalise(state);
+  return listed.length > 0 ? 'filled' : status === 'filled' ? 'empty' : status;
 }
 
 function entryRow(entry, newestId) {
@@ -61,13 +86,41 @@ function entryRow(entry, newestId) {
     '</li>';
 }
 
+/* One total card: a 12px muted label above a 28px mono amount. `known` is
+   'yes' once a load has succeeded; 'pending' draws a skeleton bar while the
+   first load runs, and 'no' a dash after a failed one. */
+function totalCard(key, label, paise, known) {
+  let value;
+  if (known === 'pending') {
+    value = '<span class="skeleton-bar total-skeleton" aria-hidden="true"></span>';
+  } else if (known === 'no') {
+    value = '<span class="amount total-amount total-unknown" data-' + key + '-total aria-hidden="true">—</span>' +
+      '<span class="visually-hidden">not known</span>';
+  } else {
+    value = '<span class="amount total-amount" data-' + key + '-total>' + formatRupees(paise) + '</span>';
+  }
+  return '<p class="card total-card' + (key === 'today' ? ' total-card-today' : '') + '">' +
+    '<span class="total-label">' + label + '</span>' +
+    value +
+  '</p>';
+}
+
+/* The Today and This month cards, side by side at the top of the screen and
+   shown in every state, summed with totals() from src/totals.js. */
+export function totalsView(entries, now = new Date(), known = 'yes') {
+  const sums = totals(entries, now);
+  return '<section class="today-totals" aria-label="Totals"' + (known === 'pending' ? ' aria-busy="true"' : '') + '>' +
+    totalCard('today', 'Today', sums.today, known) +
+    totalCard('month', 'This month', sums.month, known) +
+  '</section>';
+}
+
 function listView(entries, newestId) {
   const count = entries.length === 1 ? '1 spend' : entries.length + ' spends';
-  return '<section class="card today-list" aria-labelledby="today-total-label">' +
-    '<p class="today-total">' +
-      '<span class="today-total-label" id="today-total-label">Spent today</span>' +
-      '<span class="amount today-total-amount" data-today-total>' + formatRupees(totalPaise(entries)) + '</span>' +
-      '<span class="today-total-count">' + count + '</span>' +
+  return '<section class="card today-list" aria-labelledby="today-list-label">' +
+    '<p class="today-list-heading">' +
+      '<span class="today-list-label" id="today-list-label">Spent today</span>' +
+      '<span class="today-list-count">' + count + '</span>' +
     '</p>' +
     '<ul class="entry-list">' + entries.map((entry) => entryRow(entry, newestId)).join('') + '</ul>' +
   '</section>';
@@ -92,7 +145,6 @@ function loadingView(compact) {
   }
   return '<section class="card today-loading" aria-busy="true" aria-labelledby="today-loading-label">' +
     '<p class="visually-hidden" id="today-loading-label" role="status">Opening today’s spends</p>' +
-    (compact ? '' : '<span class="skeleton-bar skeleton-total" aria-hidden="true"></span>') +
     '<ul class="skeleton-list" aria-hidden="true">' + skeleton + '</ul>' +
   '</section>';
 }
@@ -105,16 +157,19 @@ function errorView(message) {
   '</section>';
 }
 
-/* The part of the screen that follows the state. Spends already known are
-   listed whatever the status; loading and error add their block below, and
-   a screen with no spends that is not loading or failing shows the prompt. */
+/* The part of the screen that follows the state. The total cards come
+   first in every state, with sums only once the load has succeeded; today's
+   spends already known are listed whatever the status; loading and error add
+   their block below, and a screen with no spends today that is not loading
+   or failing shows the prompt. */
 export function renderTodayView(state = {}) {
-  const { status, entries } = normalise(state);
-  const parts = [];
-  if (entries.length > 0) parts.push(listView(entries, state.newestId));
-  if (status === 'loading') parts.push(loadingView(entries.length > 0));
+  const { status, entries, listed, now } = normalise(state);
+  const known = status === 'loading' ? 'pending' : status === 'error' ? 'no' : 'yes';
+  const parts = [totalsView(entries, now, known)];
+  if (listed.length > 0) parts.push(listView(listed, state.newestId));
+  if (status === 'loading') parts.push(loadingView(listed.length > 0));
   else if (status === 'error') parts.push(errorView(state.message));
-  else if (entries.length === 0) parts.push(emptyView());
+  else if (listed.length === 0) parts.push(emptyView());
   return parts.join('');
 }
 
@@ -141,13 +196,24 @@ export function renderToday(state = { status: 'loading' }) {
  * Wires the rendered screen: focuses the entry box, loads the entries and
  * maps the promise onto the views (pending → loading, [] → empty, entries →
  * filled, rejected → error with Try again). Enter adds the typed spend at the
- * top and re-renders the total in the same task, clears the box and keeps
- * focus there. Spends added here stay listed across Try again, above
- * whatever the load brings back. isCurrent() turns false once the router has
- * replaced this screen, so a late load writes nothing. Returns the first
- * load's promise, which never rejects.
+ * top and re-renders both totals in the same task, clears the box and keeps
+ * focus there, then hands the spend to save(), which writes it to the
+ * on-device ledger. This submit handler is the one save path in the app, so
+ * it is where the totals hook in. A save that fails takes the spend back out
+ * of the list and totals, puts its text back in an empty box and names it in
+ * the hint. Spends added here stay listed across Try again, above whatever
+ * the load brings back, until the load returns their stored copy.
+ * isCurrent() turns false once the router has replaced this screen, so a
+ * late load writes nothing. Returns the first load's promise, which never
+ * rejects.
  */
-export function mountToday({ main, query = new URLSearchParams(), isCurrent = () => true, load = loadEntries }) {
+export function mountToday({
+  main,
+  query = new URLSearchParams(),
+  isCurrent = () => true,
+  load = loadEntries,
+  save = saveEntry,
+}) {
   const root = main.querySelector('.today');
   const view = main.querySelector('[data-today-view]');
   const form = main.querySelector('[data-today-form]');
@@ -183,6 +249,49 @@ export function mountToday({ main, query = new URLSearchParams(), isCurrent = ()
     if (announcer) announcer.textContent = text;
   };
 
+  /* True when the load has brought back the stored copy of an added spend:
+     by the ledger id once its save has resolved, or while the save is still
+     in flight by its time, amount and note, which the save writes as is. So
+     a load that reads the committed record before the save's callback runs
+     still never counts the spend twice. */
+  const storedCopy = (entry) => loaded.some((item) => (entry.ledgerId !== undefined
+    ? item.id === entry.ledgerId
+    : item.timestamp === entry.timestamp && item.amountPaise === entry.amountPaise && item.note === entry.note));
+
+  /* Drops each added spend the load already lists. True if any went. */
+  const settle = () => {
+    const before = added.length;
+    added = added.filter((entry) => !storedCopy(entry));
+    return added.length !== before;
+  };
+
+  function persist(entry, text) {
+    let saving;
+    try {
+      saving = Promise.resolve(save(entry, query));
+    } catch (error) {
+      saving = Promise.reject(error);
+    }
+    saving.then(
+      (stored) => {
+        if (stored && stored.id !== undefined && stored.id !== null) entry.ledgerId = stored.id;
+        if (settle()) show();
+      },
+      () => {
+        if (!added.includes(entry)) return;
+        added = added.filter((item) => item !== entry);
+        if (newestId === entry.id) newestId = null;
+        show();
+        if (!isCurrent()) return;
+        const restored = input.value === '';
+        if (restored) input.value = text;
+        const message = saveFailedHint(entry, restored);
+        setHint(message, true);
+        announce(message);
+      },
+    );
+  }
+
   /* Restart the shake animation, so each bad Enter shakes once. */
   const shake = () => {
     input.classList.remove('shake');
@@ -205,6 +314,7 @@ export function mountToday({ main, query = new URLSearchParams(), isCurrent = ()
         if (mine !== attempt) return;
         loaded = Array.isArray(entries) ? entries : [];
         status = loaded.length > 0 ? 'filled' : 'empty';
+        settle();
         show();
       },
       () => {
@@ -232,7 +342,12 @@ export function mountToday({ main, query = new URLSearchParams(), isCurrent = ()
       return;
     }
     addedCount += 1;
-    const entry = { id: 'added-' + addedCount, amountPaise: parsed.amountPaise, note: parsed.note };
+    const entry = {
+      id: 'added-' + addedCount,
+      amountPaise: parsed.amountPaise,
+      note: parsed.note,
+      timestamp: Date.now(),
+    };
     added = [entry].concat(added);
     newestId = entry.id;
     input.value = '';
@@ -240,6 +355,7 @@ export function mountToday({ main, query = new URLSearchParams(), isCurrent = ()
     show();
     announce('Added ' + formatRupees(entry.amountPaise) + (entry.note ? ' ' + entry.note : ''));
     input.focus();
+    persist(entry, text);
   });
 
   /* Live preview under the box: '₹120 · chai' while the line parses. */
