@@ -1,0 +1,143 @@
+name: baseline-ci
+
+# Seeded by never-stop when this repository was provisioned, so that
+# every pull request has at least one check that REPORTS. A repo with
+# zero registered workflows never reports a check at all, and an
+# automated merge gate cannot tell that apart from CI that has not
+# finished yet. Replace this with the project's own CI once it has
+# one; nothing here depends on the file staying.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  baseline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the project's tests when it has any
+        shell: bash
+        run: |
+          set -eu
+
+          has_npm_test=no
+          if [ -f package.json ] && command -v node >/dev/null 2>&1; then
+            if node -e "const s=(require('./package.json').scripts||{}).test||''; process.exit(s.trim() && !/no test specified/.test(s) ? 0 : 1)" >/dev/null 2>&1; then
+              has_npm_test=yes
+            fi
+          fi
+
+          test_files=$(find . -path ./node_modules -prune -o \( -name "test_*.py" -o -name "*_test.py" -o -name "*_test.go" -o -name "*.test.js" -o -name "*.test.ts" \) -type f -print) || true
+
+          if [ "$has_npm_test" = yes ]; then
+            npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+            npm test
+          elif [ -n "$test_files" ]; then
+            echo "Test files are present but this baseline workflow wires no"
+            echo "runner for them. Replace it with real CI. Discovered:"
+            echo "$test_files"
+          else
+            echo "No automated tests detected in this repository."
+          fi
+
+  web-quality:
+    # A static page has a machine-checkable quality floor, gated here
+    # so a pull request that lowers it fails a check rather than a
+    # reader's eye. Runs against index.html at the repository root and
+    # reports a no-op until that file exists. axe-core fails the job
+    # on any serious or critical violation at a phone viewport;
+    # Lighthouse asserts accessibility and best practices at or above
+    # 90. Both print their scores.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Report that there is no page to judge yet
+        if: hashFiles('index.html') == ''
+        run: echo "No index.html at the repository root yet; this gate starts reporting the day there is."
+      - uses: actions/setup-node@v4
+        if: hashFiles('index.html') != ''
+        with:
+          node-version: '20'
+      - name: Run axe-core against the served page at a phone viewport
+        if: hashFiles('index.html') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          python3 -m http.server 4173 --bind 127.0.0.1 --directory "$GITHUB_WORKSPACE" >/dev/null 2>&1 &
+          server=$!
+          trap 'kill "$server" >/dev/null 2>&1 || true' EXIT
+          for _ in $(seq 1 50); do
+            if curl -fsS http://127.0.0.1:4173/index.html >/dev/null 2>&1; then break; fi
+            sleep 0.2
+          done
+          curl -fsS http://127.0.0.1:4173/index.html >/dev/null
+
+          mkdir -p "$RUNNER_TEMP/axe"
+          cd "$RUNNER_TEMP/axe"
+          npm init -y >/dev/null
+          npm install --no-audit --no-fund --no-save puppeteer@24.10.0 @axe-core/puppeteer@4.10.2
+          cat > run.cjs <<'EOF'
+          const puppeteer = require("puppeteer");
+          const { AxePuppeteer } = require("@axe-core/puppeteer");
+
+          const url = process.argv[2];
+          const blockingImpacts = new Set(["serious", "critical"]);
+
+          async function main() {
+            const browser = await puppeteer.launch({ args: ["--no-sandbox"] });
+            try {
+              const page = await browser.newPage();
+              await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 3, isMobile: true, hasTouch: true });
+              await page.goto(url, { waitUntil: "networkidle0" });
+              const results = await new AxePuppeteer(page).analyze();
+              const blocking = results.violations.filter((v) => blockingImpacts.has(v.impact));
+              console.log("## axe-core at a phone viewport (390x844)");
+              for (const v of results.violations) {
+                console.log(`- ${v.impact}: ${v.id} - ${v.help} (${v.nodes.length} element(s))`);
+              }
+              console.log(`- ${results.violations.length} violation(s), ${blocking.length} serious or critical, ${results.passes.length} rule(s) passed`);
+              process.exitCode = blocking.length > 0 ? 1 : 0;
+            } finally {
+              await browser.close();
+            }
+          }
+
+          main().catch((err) => {
+            console.error(err);
+            process.exitCode = 1;
+          });
+          EOF
+          node run.cjs "http://127.0.0.1:4173/index.html" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Run Lighthouse and assert accessibility and best practices
+        if: hashFiles('index.html') != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          cd "$RUNNER_TEMP"
+          cat > "$RUNNER_TEMP/lighthouserc.json" <<EOF
+          {
+            "ci": {
+              "collect": {
+                "staticDistDir": "$GITHUB_WORKSPACE",
+                "url": ["http://localhost/index.html"],
+                "numberOfRuns": 1,
+                "settings": { "chromeFlags": "--no-sandbox" }
+              },
+              "assert": {
+                "assertions": {
+                  "categories:accessibility": ["error", { "minScore": 0.9 }],
+                  "categories:best-practices": ["error", { "minScore": 0.9 }]
+                }
+              },
+              "upload": { "target": "filesystem", "outputDir": "$RUNNER_TEMP/lhci" }
+            }
+          }
+          EOF
+          npx --yes @lhci/cli@0.14.0 collect --config="$RUNNER_TEMP/lighthouserc.json"
+          npx --yes @lhci/cli@0.14.0 upload --config="$RUNNER_TEMP/lighthouserc.json"
+          node -e 'const m = require(process.argv[1]); console.log("## Lighthouse (mobile emulation)"); for (const r of m) for (const [k, v] of Object.entries(r.summary)) console.log(`- ${k}: ${Math.round(v * 100)}`);' "$RUNNER_TEMP/lhci/manifest.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          npx --yes @lhci/cli@0.14.0 assert --config="$RUNNER_TEMP/lighthouserc.json"
