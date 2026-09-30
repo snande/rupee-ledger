@@ -21,13 +21,25 @@ Fails (exit 1) when any of these breaks:
     anywhere, or a
     protocol-relative //host in a src, href, @import or url(...)
   - index.html plus everything under css/ is 60 KB (60,000 bytes) or more
+  - manifest.webmanifest is missing, is not JSON, lacks name, short_name,
+    start_url, scope, background_color, theme_color or an icons array, or
+    its display is not standalone
+  - the manifest lists no 192x192 or no 512x512 PNG icon, or an icon src
+    is not a relative path under icons/, is missing, or is not a PNG of
+    the size it claims
+  - index.html lacks a relative <link rel="manifest"> to that file, a
+    <meta name="theme-color">, or a relative <link rel="apple-touch-icon">
+    to a PNG under icons/ that exists
+  - manifest.webmanifest or scripts/make_icons.py references another origin
 
 Standard library only, so CI needs nothing but python3.
 
 Usage: python3 scripts/check_static_shell.py [repo-root]
 """
 
+import json
 import re
+import struct
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
@@ -109,6 +121,8 @@ class ShellParser(HTMLParser):
         self.frame_order = []
         self.nav_tabs = []
         self.nav_depth = 0
+        self.links = []
+        self.theme_colors = []
 
     def handle_starttag(self, tag, attrs):
         attrs = {k.lower(): (v or "") for k, v in attrs}
@@ -116,6 +130,10 @@ class ShellParser(HTMLParser):
             self.stylesheets.append(attrs.get("href", ""))
         if tag == "meta" and attrs.get("name", "").lower() == "viewport":
             self.viewports.append(attrs.get("content", ""))
+        if tag == "meta" and attrs.get("name", "").lower() == "theme-color":
+            self.theme_colors.append(attrs.get("content", ""))
+        if tag == "link":
+            self.links.append((attrs.get("rel", "").lower().split(), attrs.get("href", "")))
         if tag == "script" and attrs.get("type", "").lower() == "module":
             self.module_scripts.append(attrs.get("src", ""))
         if tag in FRAME_PARTS:
@@ -285,6 +303,109 @@ def check_frame_styles(rules, merged):
         fail("css/controls.css: .tab-bar is not position: sticky or fixed, so it scrolls away")
 
 
+# ---------- manifest.webmanifest and install icons ----------
+
+MANIFEST = "manifest.webmanifest"
+MANIFEST_FIELDS = ("name", "short_name", "start_url", "scope", "background_color", "theme_color")
+REQUIRED_ICON_SIZES = ("192x192", "512x512")
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def is_relative(path):
+    return bool(path) and not (REMOTE_URL.match(path) or path.startswith("/") or ":" in path.split("/")[0])
+
+
+def png_size(path):
+    """(width, height) from a PNG's IHDR, or None when it is not a PNG."""
+    head = path.read_bytes()[:24]
+    if len(head) < 24 or not head.startswith(PNG_SIGNATURE) or head[12:16] != b"IHDR":
+        return None
+    return struct.unpack(">II", head[16:24])
+
+
+def check_icon_file(root, src, label):
+    """Fail unless src is a relative path to a PNG under icons/; return its size."""
+    if not is_relative(src) or not src.startswith("icons/"):
+        fail(f"{label} {src!r} is not a relative path under icons/")
+        return None
+    path = root / src
+    if not path.is_file():
+        fail(f"{label} {src} does not exist")
+        return None
+    size = png_size(path)
+    if size is None:
+        fail(f"{label} {src} is not a PNG")
+    return size
+
+
+def check_manifest(root):
+    path = root / MANIFEST
+    if not path.is_file():
+        fail(f"{MANIFEST} is missing at the repository root")
+        return
+    try:
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as err:
+        fail(f"{MANIFEST} is not valid JSON: {err}")
+        return
+    if not isinstance(manifest, dict):
+        fail(f"{MANIFEST} is not a JSON object")
+        return
+    for field in MANIFEST_FIELDS:
+        if not isinstance(manifest.get(field), str) or not manifest[field].strip():
+            fail(f"{MANIFEST} has no {field}")
+    for field in ("start_url", "scope"):
+        if isinstance(manifest.get(field), str) and not is_relative(manifest[field]):
+            fail(f"{MANIFEST} {field} {manifest[field]!r} is not relative, so a subpath host breaks it")
+    if manifest.get("display") != "standalone":
+        fail(f"{MANIFEST} display is {manifest.get('display')!r}, not \"standalone\"")
+
+    icons = manifest.get("icons")
+    if not isinstance(icons, list) or not icons:
+        fail(f"{MANIFEST} has no icons array")
+        return
+    png_sizes = set()
+    for icon in icons:
+        src = icon.get("src", "") if isinstance(icon, dict) else ""
+        claimed = icon.get("sizes", "") if isinstance(icon, dict) else ""
+        size = check_icon_file(root, src, f"{MANIFEST} icon")
+        if size is None:
+            continue
+        actual = f"{size[0]}x{size[1]}"
+        if claimed != actual:
+            fail(f"{MANIFEST} icon {src} claims sizes {claimed!r} but is {actual}")
+        elif icon.get("type", "image/png") == "image/png":
+            png_sizes.add(actual)
+    for wanted in REQUIRED_ICON_SIZES:
+        if wanted not in png_sizes:
+            fail(f"{MANIFEST} lists no {wanted} PNG icon")
+
+
+def check_install_tags(root):
+    index = root / "index.html"
+    if not index.is_file():
+        return
+    parser = ShellParser()
+    parser.feed(index.read_text(encoding="utf-8"))
+
+    def hrefs(rel):
+        return [href for rels, href in parser.links if rel in rels]
+
+    manifests = hrefs("manifest")
+    if not manifests:
+        fail(f'index.html has no <link rel="manifest" href="{MANIFEST}">')
+    for href in manifests:
+        if href != MANIFEST:
+            fail(f'index.html links manifest {href!r}; expected the relative path "{MANIFEST}"')
+    if not any(c.strip() for c in parser.theme_colors):
+        fail('index.html has no <meta name="theme-color" content="...">')
+    touch_icons = hrefs("apple-touch-icon")
+    if not touch_icons:
+        fail('index.html has no <link rel="apple-touch-icon"> pointing under icons/')
+    for href in touch_icons:
+        check_icon_file(root, href, "index.html apple-touch-icon")
+
+
 # ---------- remote references and size ----------
 
 REMOTE_URL = re.compile(r"https?://", re.I)
@@ -307,8 +428,12 @@ def script_files(root):
     return sorted(p for p in js_dir.rglob("*.js") if p.is_file()) if js_dir.is_dir() else []
 
 
+def install_files(root):
+    return [p for p in (root / MANIFEST, root / "scripts" / "make_icons.py") if p.is_file()]
+
+
 def check_remote_refs(root):
-    for path in shell_files(root) + script_files(root):
+    for path in shell_files(root) + script_files(root) + install_files(root):
         text = path.read_text(encoding="utf-8", errors="replace")
         for lineno, line in enumerate(text.splitlines(), 1):
             if REMOTE_URL.search(line) or PROTOCOL_RELATIVE.search(line):
@@ -332,6 +457,8 @@ def main(argv):
     check_index(root)
     check_tokens(root, tokens)
     check_controls(root, tokens)
+    check_manifest(root)
+    check_install_tags(root)
     check_remote_refs(root)
     total = check_size(root)
 
@@ -340,7 +467,7 @@ def main(argv):
         for message in failures:
             print(f"  - {message}")
         return 1
-    print(f"Static shell check passed: {len(tokens)} tokens, 4 controls styled, no remote refs, {total} bytes.")
+    print(f"Static shell check passed: {len(tokens)} tokens, 4 controls styled, manifest and install icons valid, no remote refs, {total} bytes.")
     return 0
 
 
