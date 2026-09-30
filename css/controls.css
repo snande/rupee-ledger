@@ -50,6 +50,8 @@ body {
 /* min-width and overflow-wrap keep long content from widening the page past
    a 360px screen. */
 main {
+  display: flex;
+  flex-direction: column;
   flex: 1 0 auto;
   width: 100%;
   min-width: 0;
@@ -148,6 +150,231 @@ label {
   outline: var(--focus-ring-width) solid var(--color-haldi);
   outline-offset: var(--focus-ring-width);
   border-color: var(--color-ink);
+}
+
+/* Readable by screen readers, invisible on screen. */
+.visually-hidden {
+  position: absolute;
+  width: var(--border-hairline);
+  height: var(--border-hairline);
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* ---------- Today screen ---------- */
+
+/* A column that fills <main>, so the entry box sits at the bottom even when
+   there are few spends. */
+.today {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.today-view {
+  min-width: 0;
+}
+
+/* Today's total is the screen's one emphasis: 28px mono with a haldi rule. */
+.today-total {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: var(--space-1) var(--space-3);
+  margin: 0 0 var(--space-3);
+  padding-bottom: var(--space-3);
+  border-bottom: var(--focus-ring-width) solid var(--color-haldi);
+}
+
+.today-total-label {
+  grid-column: 1 / -1;
+  color: var(--color-muted);
+  font-size: var(--text-1);
+}
+
+.today-total-amount {
+  font-size: var(--text-5);
+  font-weight: var(--weight-strong);
+  line-height: var(--leading-tight);
+}
+
+.today-total-count {
+  color: var(--color-muted);
+  font-size: var(--text-2);
+}
+
+.entry-list,
+.skeleton-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* Description left, amount right in mono; the note wraps, the amount never
+   does, so a 360px screen never scrolls sideways. */
+.entry-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--control-min-height);
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-hairline) solid var(--color-divider);
+}
+
+.entry-row:last-child {
+  border-bottom: 0;
+}
+
+.entry-note {
+  min-width: 0;
+  font-size: var(--text-3);
+}
+
+.entry-note-empty {
+  color: var(--color-muted);
+}
+
+.entry-amount {
+  flex: none;
+  font-size: var(--text-3);
+  white-space: nowrap;
+}
+
+/* A new spend arrives at the top with a brief haldi flash. */
+.entry-new {
+  animation: entry-flash var(--motion-flash) ease-out;
+}
+
+@keyframes entry-flash {
+  from {
+    background-color: var(--color-haldi);
+  }
+  to {
+    background-color: var(--color-card);
+  }
+}
+
+.today-cta {
+  width: 100%;
+}
+
+.today-error {
+  border-color: var(--color-sindoor);
+}
+
+.today-error-message {
+  margin-bottom: var(--space-2);
+  color: var(--color-sindoor);
+  font-weight: var(--weight-strong);
+}
+
+.today-error .hint {
+  margin-bottom: var(--space-4);
+}
+
+/* Skeletons: paper-tone bars on the card, pulsing gently. */
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  min-height: var(--control-min-height);
+}
+
+.skeleton-bar {
+  display: block;
+  height: var(--skeleton-line);
+  border-radius: var(--space-1);
+  background: var(--color-paper);
+  animation: skeleton-pulse var(--motion-pulse) ease-in-out infinite alternate;
+}
+
+.skeleton-total {
+  width: 40%;
+  height: var(--skeleton-total);
+  margin-bottom: var(--space-3);
+}
+
+.skeleton-note {
+  width: 60%;
+}
+
+.skeleton-amount {
+  width: 20%;
+}
+
+@keyframes skeleton-pulse {
+  from {
+    opacity: var(--opacity-opaque);
+  }
+  to {
+    opacity: var(--opacity-disabled);
+  }
+}
+
+/* The quick-entry box: pinned above the tab bar, on a card surface so the
+   muted hint keeps AA contrast. */
+.today-entry {
+  position: sticky;
+  bottom: calc(var(--tab-bar-height) + var(--border-hairline) + var(--safe-area-bottom));
+  z-index: var(--layer-frame);
+  display: grid;
+  gap: var(--space-1);
+  margin-top: auto;
+  padding: var(--space-3);
+  border: var(--border-hairline) solid var(--color-divider);
+  border-radius: var(--radius-control);
+  background: var(--color-card);
+}
+
+.today-entry-row {
+  display: flex;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.today-entry-row .quick-entry {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.today-entry-row button {
+  flex: none;
+  min-width: var(--control-min-height);
+  padding: var(--space-2) var(--space-4);
+}
+
+/* A bad entry shakes once; the hint under it says what to fix. */
+.shake {
+  animation: entry-shake var(--motion-quick) ease-in-out;
+}
+
+@keyframes entry-shake {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25%,
+  75% {
+    transform: translateX(calc(var(--space-2) * -1));
+  }
+  50% {
+    transform: translateX(var(--space-2));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .entry-new,
+  .shake,
+  .skeleton-bar {
+    animation: none;
+  }
 }
 
 /* ---------- Tab bar ---------- */

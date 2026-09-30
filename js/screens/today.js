@@ -1,71 +1,258 @@
 /*
- * The Today screen: the quick-entry card and the controls that are not
- * available until there are spends. Static markup for now; later
- * deliverables wire it to the ledger.
+ * The Today screen: today's spends above a quick-entry box pinned at the
+ * bottom. renderToday(state) returns the whole screen for the router to put
+ * into <main>; mountToday() then loads the entries and keeps the view in step
+ * with the load and with every spend typed in.
+ *
+ * State: { status: 'empty' | 'loading' | 'error' | 'filled',
+ *          entries?: [{ id, amountPaise, note }], message?: string }.
+ * Amounts are integer paise and are only ever shown in rupees with ₹.
+ * Strings are joined with + rather than template literals, so the only
+ * currency sign anywhere in this file is ₹.
  */
 
-export function renderToday() {
-  return `
-    <section class="card" aria-labelledby="add-heading">
-      <h2 id="add-heading">Add a spend</h2>
+import { parseEntry } from '../../src/parse-entry.js';
+import { loadEntries } from '../data/stub.js';
 
-      <div class="field">
-        <label for="quick-entry">Quick entry</label>
-        <input class="quick-entry" id="quick-entry" type="text" placeholder="120 chai" autocomplete="off" aria-describedby="quick-entry-preview">
-        <p class="hint" id="quick-entry-preview"><span class="amount">₹120</span> · Tea &amp; snacks</p>
-      </div>
+export const STATUSES = ['empty', 'loading', 'error', 'filled'];
+export const ERROR_MESSAGE = 'Today’s spends did not open.';
+export const ENTRY_HINT = 'Amount first, then what it was for';
+export const INVALID_HINT = 'Start with the amount, like 120 chai';
 
-      <div class="field">
-        <label for="category">Category</label>
-        <select id="category">
-          <option>Tea &amp; snacks</option>
-          <option>Groceries</option>
-          <option>Travel</option>
-          <option>Bills</option>
-          <option>Other</option>
-        </select>
-      </div>
+const SKELETON_ROWS = 3;
 
-      <div class="field">
-        <label for="note">Note</label>
-        <textarea id="note" rows="3" placeholder="Anything to remember about this spend"></textarea>
-      </div>
+export function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
-      <label class="choice" for="remember">
-        <input id="remember" type="checkbox" checked>
-        Remember this category for chai
-      </label>
+/* Indian digit grouping (₹1,23,450), with paise only when there are any. */
+export function formatRupees(amountPaise) {
+  const paise = Math.max(0, Math.round(Number(amountPaise) || 0));
+  const rupees = String(Math.floor(paise / 100));
+  const fraction = paise % 100;
+  const lastThree = rupees.slice(-3);
+  const rest = rupees.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',');
+  const whole = rest ? rest + ',' + lastThree : lastThree;
+  return '₹' + whole + (fraction ? '.' + String(fraction).padStart(2, '0') : '');
+}
 
-      <div class="button-row">
-        <button type="button">Add</button>
-        <button type="button" class="button-secondary">Export backup</button>
-        <button type="button" class="button-destructive">Delete</button>
-      </div>
-    </section>
+export function totalPaise(entries) {
+  return entries.reduce((sum, entry) => sum + (Number(entry.amountPaise) || 0), 0);
+}
 
-    <section class="card" aria-labelledby="disabled-heading">
-      <h2 id="disabled-heading">Not available yet</h2>
+function entryRow(entry, newestId) {
+  const isNew = newestId !== undefined && newestId !== null && entry.id === newestId;
+  const note = entry.note
+    ? '<span class="entry-note">' + escapeHtml(entry.note) + '</span>'
+    : '<span class="entry-note entry-note-empty">No note</span>';
+  return '<li class="entry-row' + (isNew ? ' entry-new' : '') + '">' +
+    note +
+    '<span class="amount entry-amount">' + formatRupees(entry.amountPaise) + '</span>' +
+    '</li>';
+}
 
-      <div class="field">
-        <label for="search-disabled">Search spends</label>
-        <input id="search-disabled" type="search" placeholder="Add a spend first" disabled>
-      </div>
+function listView(entries, newestId) {
+  const count = entries.length === 1 ? '1 spend' : entries.length + ' spends';
+  return '<section class="card today-list" aria-labelledby="today-total-label">' +
+    '<p class="today-total">' +
+      '<span class="today-total-label" id="today-total-label">Spent today</span>' +
+      '<span class="amount today-total-amount" data-today-total>' + formatRupees(totalPaise(entries)) + '</span>' +
+      '<span class="today-total-count">' + count + '</span>' +
+    '</p>' +
+    '<ul class="entry-list">' + entries.map((entry) => entryRow(entry, newestId)).join('') + '</ul>' +
+  '</section>';
+}
 
-      <div class="field">
-        <label for="month-disabled">Compare month</label>
-        <select id="month-disabled" disabled>
-          <option>No spends this month yet</option>
-        </select>
-      </div>
+function emptyView() {
+  return '<section class="card today-empty" aria-labelledby="today-empty-heading">' +
+    '<h2 id="today-empty-heading">No spends yet today</h2>' +
+    '<p>Type what you spent, like <span class="amount">120</span> chai, and press Enter.</p>' +
+    '<button type="button" class="button-secondary today-cta" data-action="focus-entry">' +
+      'Add your first spend <span aria-hidden="true">↓</span>' +
+    '</button>' +
+  '</section>';
+}
 
-      <div class="field">
-        <label for="note-disabled">Backup note</label>
-        <textarea id="note-disabled" rows="2" placeholder="No backup yet" disabled></textarea>
-      </div>
+/* Paper-tone placeholder rows; smaller when real rows are already shown. */
+function loadingView(compact) {
+  const rows = compact ? 1 : SKELETON_ROWS;
+  let skeleton = '';
+  for (let i = 0; i < rows; i += 1) {
+    skeleton += '<li class="skeleton-row"><span class="skeleton-bar skeleton-note"></span><span class="skeleton-bar skeleton-amount"></span></li>';
+  }
+  return '<section class="card today-loading" aria-busy="true" aria-labelledby="today-loading-label">' +
+    '<p class="visually-hidden" id="today-loading-label" role="status">Opening today’s spends</p>' +
+    (compact ? '' : '<span class="skeleton-bar skeleton-total" aria-hidden="true"></span>') +
+    '<ul class="skeleton-list" aria-hidden="true">' + skeleton + '</ul>' +
+  '</section>';
+}
 
-      <div class="button-row">
-        <button type="button" disabled>Import backup</button>
-      </div>
-    </section>
-  `;
+function errorView(message) {
+  return '<section class="card today-error" role="alert" aria-labelledby="today-error-message">' +
+    '<p class="today-error-message" id="today-error-message">' + escapeHtml(message || ERROR_MESSAGE) + '</p>' +
+    '<p class="hint">Nothing is lost. Your spends stay on this phone. Try again, and if it keeps happening, reload the app.</p>' +
+    '<button type="button" class="button-secondary" data-action="retry">Try again</button>' +
+  '</section>';
+}
+
+/* The part of the screen that follows the state. Spends already known are
+   listed whatever the status; loading and error add their block below, and
+   a screen with no spends that is not loading or failing shows the prompt. */
+export function renderTodayView(state = {}) {
+  const status = STATUSES.includes(state.status) ? state.status : 'loading';
+  const entries = Array.isArray(state.entries) ? state.entries : [];
+  const parts = [];
+  if (entries.length > 0) parts.push(listView(entries, state.newestId));
+  if (status === 'loading') parts.push(loadingView(entries.length > 0));
+  else if (status === 'error') parts.push(errorView(state.message));
+  else if (entries.length === 0) parts.push(emptyView());
+  return parts.join('');
+}
+
+export function renderToday(state = { status: 'loading' }) {
+  const status = STATUSES.includes(state.status) ? state.status : 'loading';
+  return '<div class="today" data-status="' + status + '">' +
+    '<div class="today-view" data-today-view>' + renderTodayView(state) + '</div>' +
+    '<form class="today-entry" data-today-form novalidate>' +
+      '<label for="quick-entry">Add a spend</label>' +
+      '<div class="today-entry-row">' +
+        '<input class="quick-entry" id="quick-entry" name="entry" type="text" placeholder="120 chai" ' +
+          'autocomplete="off" autocapitalize="off" enterkeyhint="done" aria-describedby="quick-entry-hint">' +
+        '<button type="submit">Add</button>' +
+      '</div>' +
+      '<p class="hint" id="quick-entry-hint">' + ENTRY_HINT + '</p>' +
+      '<p class="visually-hidden" role="status" data-entry-status></p>' +
+    '</form>' +
+  '</div>';
+}
+
+/*
+ * Wires the rendered screen: focuses the entry box, loads the entries and
+ * maps the promise onto the views (pending → loading, [] → empty, entries →
+ * filled, rejected → error with Try again). Enter adds the typed spend at the
+ * top and re-renders the total in the same task, clears the box and keeps
+ * focus there. isCurrent() turns false once the router has replaced this
+ * screen, so a late load writes nothing. Returns the first load's promise,
+ * which never rejects.
+ */
+export function mountToday({ main, query = new URLSearchParams(), isCurrent = () => true, load = loadEntries }) {
+  const root = main.querySelector('.today');
+  const view = main.querySelector('[data-today-view]');
+  const form = main.querySelector('[data-today-form]');
+  const input = main.querySelector('#quick-entry');
+  const hint = main.querySelector('#quick-entry-hint');
+  const announcer = main.querySelector('[data-entry-status]');
+  if (!view || !form || !input || !hint) {
+    throw new Error('The Today screen markup is incomplete.');
+  }
+
+  let status = 'loading';
+  let loaded = [];
+  let added = [];
+  let newestId = null;
+  let attempt = 0;
+  let addedCount = 0;
+
+  const show = () => {
+    if (!isCurrent()) return;
+    const entries = added.concat(loaded);
+    if (root) root.setAttribute('data-status', status === 'empty' && entries.length ? 'filled' : status);
+    view.innerHTML = renderTodayView({ status, entries, newestId });
+  };
+
+  const setHint = (text, invalid) => {
+    hint.textContent = text;
+    hint.classList.toggle('hint-error', invalid);
+    if (invalid) input.setAttribute('aria-invalid', 'true');
+    else input.removeAttribute('aria-invalid');
+  };
+
+  const announce = (text) => {
+    if (announcer) announcer.textContent = text;
+  };
+
+  /* Restart the shake animation, so each bad Enter shakes once. */
+  const shake = () => {
+    input.classList.remove('shake');
+    void input.offsetWidth;
+    input.classList.add('shake');
+  };
+
+  function start() {
+    const mine = ++attempt;
+    status = 'loading';
+    show();
+    let pending;
+    try {
+      pending = Promise.resolve(load(query));
+    } catch (error) {
+      pending = Promise.reject(error);
+    }
+    return pending.then(
+      (entries) => {
+        if (mine !== attempt) return;
+        loaded = Array.isArray(entries) ? entries : [];
+        status = loaded.length > 0 ? 'filled' : 'empty';
+        show();
+      },
+      () => {
+        if (mine !== attempt) return;
+        status = 'error';
+        show();
+      },
+    );
+  }
+
+  form.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const text = input.value;
+    if (text.trim() === '') {
+      input.focus();
+      return;
+    }
+    const parsed = parseEntry(text);
+    if (!parsed) {
+      setHint(INVALID_HINT, true);
+      shake();
+      announce(INVALID_HINT);
+      input.focus();
+      return;
+    }
+    addedCount += 1;
+    const entry = { id: 'added-' + addedCount, amountPaise: parsed.amountPaise, note: parsed.note };
+    added = [entry].concat(added);
+    newestId = entry.id;
+    input.value = '';
+    setHint(ENTRY_HINT, false);
+    show();
+    announce('Added ' + formatRupees(entry.amountPaise) + (entry.note ? ' ' + entry.note : ''));
+    input.focus();
+  });
+
+  /* Live preview under the box: '₹120 · chai' while the line parses. */
+  input.addEventListener('input', () => {
+    const text = input.value;
+    const parsed = text.trim() === '' ? null : parseEntry(text);
+    if (parsed) setHint(formatRupees(parsed.amountPaise) + (parsed.note ? ' · ' + parsed.note : ''), false);
+    else setHint(ENTRY_HINT, false);
+  });
+
+  input.addEventListener('animationend', () => input.classList.remove('shake'));
+
+  view.addEventListener('click', (event) => {
+    const target = event.target && typeof event.target.closest === 'function'
+      ? event.target.closest('[data-action]')
+      : null;
+    const action = target ? target.getAttribute('data-action') : null;
+    if (action === 'retry') start();
+    else if (action === 'focus-entry') input.focus();
+  });
+
+  input.focus();
+  return start();
 }
