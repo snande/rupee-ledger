@@ -350,6 +350,27 @@ test('typing 120 chai and pressing Enter saves it, clears the box and updates th
   assert.match(screen.view.innerHTML, /entry-new"><span class="entry-note">auto/);
 });
 
+test('Enter on 120 chai puts a chai ₹120 row at the top of #today-list and in the total before the save settles', async () => {
+  const screen = fakeScreen();
+  const written = [];
+  const save = (entry) => { written.push(entry); return new Promise(() => {}); };
+  await mountToday({ main: screen.main, save, load: async () => [{ id: 1, amountPaise: 4550, note: 'auto', timestamp: Date.now() }] });
+
+  assert.equal(type(screen, '120 chai'), true);
+  const list = screen.view.innerHTML.match(/<ul class="entry-list" id="today-list">(.*?)<\/ul>/)[1];
+  const rows = list.match(/<li[^>]*>.*?<\/li>/g);
+  assert.equal(rows.length, 2);
+  assert.match(rows[0], /<span class="entry-note">chai<\/span><span class="amount entry-amount">₹120<\/span>/);
+  assert.match(rows[1], /₹45\.5</, 'row amounts come from formatPaise');
+  assert.equal(today(screen.view.innerHTML), '₹165.50');
+  assert.deepEqual(written.map(({ amountPaise, note }) => ({ amountPaise, note })), [{ amountPaise: 12000, note: 'chai' }]);
+  assert.equal(screen.input.value, '');
+});
+
+test('the invalid-line hint is the quick-entry wording', () => {
+  assert.equal(INVALID_HINT, 'Start with an amount, e.g. 120 chai');
+});
+
 test('a line with no amount shakes, shows an inline hint and keeps the text', async () => {
   const screen = fakeScreen();
   await mountToday({ main: screen.main, save: keep, load: async () => [] });

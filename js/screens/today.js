@@ -19,6 +19,8 @@
  */
 
 import { parseEntry } from '../../src/parse-entry.js';
+import { formatPaise } from '../../src/format-amount.js';
+import { QUICK_ENTRY_HINT, showHint, wireQuickEntry } from '../../src/quick-entry.js';
 import { formatRupees, totals } from '../../src/totals.js';
 import { loadEntries, saveEntry } from '../data/ledger.js';
 
@@ -27,7 +29,7 @@ export { formatRupees };
 export const STATUSES = ['empty', 'loading', 'error', 'filled'];
 export const ERROR_MESSAGE = 'Today’s spends did not open.';
 export const ENTRY_HINT = 'Amount first, then what it was for';
-export const INVALID_HINT = 'Start with the amount, like 120 chai';
+export const INVALID_HINT = QUICK_ENTRY_HINT;
 
 const SKELETON_ROWS = 3;
 
@@ -82,7 +84,7 @@ function entryRow(entry, newestId) {
     : '<span class="entry-note entry-note-empty">No note</span>';
   return '<li class="entry-row' + (isNew ? ' entry-new' : '') + '">' +
     note +
-    '<span class="amount entry-amount">' + formatRupees(entry.amountPaise) + '</span>' +
+    '<span class="amount entry-amount">' + formatPaise(entry.amountPaise) + '</span>' +
     '</li>';
 }
 
@@ -122,7 +124,7 @@ function listView(entries, newestId) {
       '<span class="today-list-label" id="today-list-label">Spent today</span>' +
       '<span class="today-list-count">' + count + '</span>' +
     '</p>' +
-    '<ul class="entry-list">' + entries.map((entry) => entryRow(entry, newestId)).join('') + '</ul>' +
+    '<ul class="entry-list" id="today-list">' + entries.map((entry) => entryRow(entry, newestId)).join('') + '</ul>' +
   '</section>';
 }
 
@@ -195,11 +197,12 @@ export function renderToday(state = { status: 'loading' }) {
 /*
  * Wires the rendered screen: focuses the entry box, loads the entries and
  * maps the promise onto the views (pending → loading, [] → empty, entries →
- * filled, rejected → error with Try again). Enter adds the typed spend at the
- * top and re-renders both totals in the same task, clears the box and keeps
- * focus there, then hands the spend to save(), which writes it to the
- * on-device ledger. This submit handler is the one save path in the app, so
- * it is where the totals hook in. A save that fails takes the spend back out
+ * filled, rejected → error with Try again). Enter goes through
+ * wireQuickEntry() in src/quick-entry.js: it adds the typed spend at the top
+ * of #today-list and re-renders both totals in the same task, then hands the
+ * spend to save(), which writes it to the on-device ledger, and clears the
+ * box and keeps focus there. This submit handler is the one save path in the
+ * app, so it is where the totals hook in. A save that fails takes the spend back out
  * of the list and totals, puts its text back in an empty box and names it in
  * the hint. Spends added here stay listed across Try again, above whatever
  * the load brings back, until the load returns their stored copy.
@@ -238,12 +241,7 @@ export function mountToday({
     view.innerHTML = renderTodayView(state);
   };
 
-  const setHint = (text, invalid) => {
-    hint.textContent = text;
-    hint.classList.toggle('hint-error', invalid);
-    if (invalid) input.setAttribute('aria-invalid', 'true');
-    else input.removeAttribute('aria-invalid');
-  };
+  const setHint = (text, invalid) => showHint(hint, input, text, invalid);
 
   const announce = (text) => {
     if (announcer) announcer.textContent = text;
@@ -265,13 +263,9 @@ export function mountToday({
     return added.length !== before;
   };
 
-  function persist(entry, text) {
-    let saving;
-    try {
-      saving = Promise.resolve(save(entry, query));
-    } catch (error) {
-      saving = Promise.reject(error);
-    }
+  /* Follows the write of a spend already shown: records its ledger id once
+     it has committed, or takes it back out if the write fails. */
+  function follow(saving, entry, text) {
     saving.then(
       (stored) => {
         if (stored && stored.id !== undefined && stored.id !== null) entry.ledgerId = stored.id;
@@ -326,36 +320,31 @@ export function mountToday({
     );
   }
 
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const text = input.value;
-    if (text.trim() === '') {
-      input.focus();
-      return;
-    }
-    const parsed = parseEntry(text);
-    if (!parsed) {
-      setHint(INVALID_HINT, true);
+  wireQuickEntry({
+    form,
+    input,
+    hint,
+    onEntry: (record) => {
+      addedCount += 1;
+      const entry = {
+        id: 'added-' + addedCount,
+        amountPaise: record.amountPaise,
+        note: record.note,
+        timestamp: record.createdAt,
+      };
+      added = [entry].concat(added);
+      newestId = entry.id;
+      setHint(ENTRY_HINT, false);
+      show();
+      announce('Added ' + formatPaise(entry.amountPaise) + (entry.note ? ' ' + entry.note : ''));
+      return entry;
+    },
+    add: (record) => save({ amountPaise: record.amountPaise, note: record.note, timestamp: record.createdAt }, query),
+    onSaving: follow,
+    onInvalid: () => {
       shake();
       announce(INVALID_HINT);
-      input.focus();
-      return;
-    }
-    addedCount += 1;
-    const entry = {
-      id: 'added-' + addedCount,
-      amountPaise: parsed.amountPaise,
-      note: parsed.note,
-      timestamp: Date.now(),
-    };
-    added = [entry].concat(added);
-    newestId = entry.id;
-    input.value = '';
-    setHint(ENTRY_HINT, false);
-    show();
-    announce('Added ' + formatRupees(entry.amountPaise) + (entry.note ? ' ' + entry.note : ''));
-    input.focus();
-    persist(entry, text);
+    },
   });
 
   /* Live preview under the box: '₹120 · chai' while the line parses. */
