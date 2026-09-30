@@ -12,7 +12,10 @@
  */
 
 import { parseEntry } from '../../src/parse-entry.js';
+import { formatRupees } from '../../src/totals.js';
 import { loadEntries } from '../data/stub.js';
+
+export { formatRupees };
 
 export const STATUSES = ['empty', 'loading', 'error', 'filled'];
 export const ERROR_MESSAGE = 'Today’s spends did not open.';
@@ -28,17 +31,6 @@ export function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-/* Indian digit grouping (₹1,23,450), with paise only when there are any. */
-export function formatRupees(amountPaise) {
-  const paise = Math.max(0, Math.round(Number(amountPaise) || 0));
-  const rupees = String(Math.floor(paise / 100));
-  const fraction = paise % 100;
-  const lastThree = rupees.slice(-3);
-  const rest = rupees.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',');
-  const whole = rest ? rest + ',' + lastThree : lastThree;
-  return '₹' + whole + (fraction ? '.' + String(fraction).padStart(2, '0') : '');
 }
 
 export function totalPaise(entries) {
