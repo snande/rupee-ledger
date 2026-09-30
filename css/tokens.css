@@ -1,0 +1,61 @@
+/*
+ * Design tokens, transcribed from DESIGN.md. This file is the only place a raw
+ * colour, typeface or length may appear; every other stylesheet builds on
+ * these custom properties.
+ */
+
+:root {
+  /* Palette */
+  --color-paper: #FAF6EE;   /* app background, warm off-white like ledger paper */
+  --color-card: #FFFFFF;    /* surfaces: entry rows, total cards, sheets */
+  --color-ink: #1F2A2E;     /* primary text and amounts */
+  --color-muted: #6B7471;   /* secondary text, timestamps, category labels */
+  --color-haldi: #D98E04;   /* accent: primary action, focus ring, active tab */
+  --color-sindoor: #C2412D; /* danger: delete, failed import, increase */
+
+  /* Typefaces: the brief's face first, then a system fallback. Nothing is
+     fetched remotely, so the app stays fully offline. */
+  --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+
+  /* Type scale: 12/14/16/20/28/40 */
+  --text-1: 12px;
+  --text-2: 14px;
+  --text-3: 16px;
+  --text-4: 20px;
+  --text-5: 28px;
+  --text-6: 40px;
+
+  /* Spacing scale: 4/8/12/16/24/32/48 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* Derived tokens, built from the scales above */
+  --color-divider: rgba(107, 116, 113, 0.2);                    /* muted at 20% */
+  --radius-control: var(--space-3);                             /* 12px radius */
+  --radius-round: 50%;
+  --control-min-height: var(--space-7);                         /* 48px tap target */
+  --quick-entry-height: calc(var(--space-7) + var(--space-2));  /* 56px */
+  --page-max-width: calc(var(--space-7) * 10);
+  --border-hairline: 1px;
+  --focus-ring-width: 2px;
+  --weight-regular: 400;
+  --weight-strong: 600;
+  --leading-tight: 1.25;
+  --leading-body: 1.5;
+  --opacity-disabled: 0.6;
+  --opacity-opaque: 1;
+}
+
+/* Where color-mix() is supported, derive the divider from the muted token so
+   the two cannot drift. Older Android WebViews keep the rgba() above. */
+@supports (color: color-mix(in srgb, red 20%, transparent)) {
+  :root {
+    --color-divider: color-mix(in srgb, var(--color-muted) 20%, transparent);
+  }
+}

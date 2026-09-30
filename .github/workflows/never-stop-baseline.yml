@@ -42,6 +42,17 @@ jobs:
             echo "No automated tests detected in this repository."
           fi
 
+  static-shell:
+    # The scaffold contract from DESIGN.md: stylesheets linked, every brief
+    # value present as a token, controls styled only from tokens with focus
+    # and disabled states, exact viewport tag, no other origin referenced,
+    # and index.html plus css/ under 60 KB.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the static shell against DESIGN.md
+        run: python3 scripts/check_static_shell.py
+
   web-quality:
     # A static page has a machine-checkable quality floor, gated here
     # so a pull request that lowers it fails a check rather than a
