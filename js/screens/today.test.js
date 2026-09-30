@@ -6,17 +6,23 @@ import {
   ENTRY_HINT,
   ERROR_MESSAGE,
   INVALID_HINT,
+  SAVE_FAILED_HINT,
   formatRupees,
+  isToday,
   mountToday,
   renderToday,
   renderTodayView,
   shownStatus,
 } from './today.js';
 
+const now = Date.now();
 const sample = [
-  { id: 'a', amountPaise: 124500, note: 'Electricity top-up' },
-  { id: 'b', amountPaise: 4550, note: 'Auto <to> station' },
+  { id: 'a', amountPaise: 124500, note: 'Electricity top-up', timestamp: now },
+  { id: 'b', amountPaise: 4550, note: 'Auto <to> station', timestamp: now },
 ];
+
+/* A save that succeeds without a ledger, as on a demo visit. */
+const keep = async () => null;
 
 /* Just enough of an element for the screen: attributes, classes, events. */
 function fakeElement() {
@@ -142,7 +148,7 @@ test('the error view shows a given message, escaped', () => {
 });
 
 test('entry notes are escaped, and an empty note reads No note', () => {
-  const html = renderTodayView({ status: 'filled', entries: [...sample, { id: 'c', amountPaise: 100, note: '' }] });
+  const html = renderTodayView({ status: 'filled', entries: [...sample, { id: 'c', amountPaise: 100, note: '', timestamp: now }] });
   assert.match(html, /Auto &lt;to&gt; station/);
   assert.doesNotMatch(html, /<to>/);
   assert.match(html, /entry-note-empty">No note</);
@@ -224,7 +230,7 @@ test('every tap target on the screen is at least 44 by 44 CSS pixels', async () 
 test('on open the entry box has focus and the screen shows loading until the load settles', async () => {
   const screen = fakeScreen();
   let resolve;
-  const ready = mountToday({ main: screen.main, load: () => new Promise((yes) => { resolve = yes; }) });
+  const ready = mountToday({ main: screen.main, save: keep, load: () => new Promise((yes) => { resolve = yes; }) });
   assert.equal(screen.input.focusCount, 1);
   assert.match(screen.view.innerHTML, /aria-busy="true"/);
   assert.equal(screen.root.getAttribute('data-status'), 'loading');
@@ -237,7 +243,7 @@ test('on open the entry box has focus and the screen shows loading until the loa
 
 test('a load that resolves [] shows the empty view, and its call to action focuses the box', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, load: async () => [] });
+  await mountToday({ main: screen.main, save: keep, load: async () => [] });
   assert.match(screen.view.innerHTML, /today-empty/);
   assert.equal(screen.root.getAttribute('data-status'), 'empty');
   const before = screen.input.focusCount;
@@ -252,7 +258,7 @@ test('a load that rejects shows the error view, and Try again loads again', asyn
     calls += 1;
     return calls === 1 ? Promise.reject(new Error('disk')) : Promise.resolve(sample);
   };
-  await mountToday({ main: screen.main, load });
+  await mountToday({ main: screen.main, save: keep, load });
   assert.match(screen.view.innerHTML, /today-error/);
   assert.match(screen.view.innerHTML, /Try again/);
   assert.equal(screen.root.getAttribute('data-status'), 'error');
@@ -274,7 +280,7 @@ test('a spend added during an error stays listed, with a correct total, across T
     if (calls === 2) return Promise.reject(new Error('disk again'));
     return Promise.resolve(sample);
   };
-  await mountToday({ main: screen.main, load });
+  await mountToday({ main: screen.main, save: keep, load });
 
   type(screen, '120 chai');
   assert.equal(screen.root.getAttribute('data-status'), 'filled');
@@ -299,7 +305,7 @@ test('a spend added during an error stays listed, with a correct total, across T
 
 test('a load that throws synchronously also shows the error view', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, load: () => { throw new Error('no'); } });
+  await mountToday({ main: screen.main, save: keep, load: () => { throw new Error('no'); } });
   assert.match(screen.view.innerHTML, /today-error/);
 });
 
@@ -308,6 +314,7 @@ test('the query from the router reaches the data source', async () => {
   const seen = [];
   await mountToday({
     main: screen.main,
+    save: keep,
     query: new URLSearchParams('state=filled'),
     load: async (query) => { seen.push(query.get('state')); return []; },
   });
@@ -316,7 +323,7 @@ test('the query from the router reaches the data source', async () => {
 
 test('typing 120 chai and pressing Enter saves it, clears the box and updates the total at once', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, load: async () => [] });
+  await mountToday({ main: screen.main, save: keep, load: async () => [] });
 
   screen.input.value = '120 chai';
   screen.input.dispatch('input');
@@ -343,7 +350,7 @@ test('typing 120 chai and pressing Enter saves it, clears the box and updates th
 
 test('a line with no amount shakes, shows an inline hint and keeps the text', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, load: async () => [] });
+  await mountToday({ main: screen.main, save: keep, load: async () => [] });
   const before = screen.view.innerHTML;
 
   type(screen, 'chai');
@@ -365,7 +372,7 @@ test('a line with no amount shakes, shows an inline hint and keeps the text', as
 
 test('an empty Enter does nothing', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, load: async () => [] });
+  await mountToday({ main: screen.main, save: keep, load: async () => [] });
   const before = screen.view.innerHTML;
   type(screen, '   ');
   assert.equal(screen.view.innerHTML, before);
@@ -375,7 +382,7 @@ test('an empty Enter does nothing', async () => {
 test('a spend added while loading shows at once and joins the loaded ones', async () => {
   const screen = fakeScreen();
   let resolve;
-  const ready = mountToday({ main: screen.main, load: () => new Promise((yes) => { resolve = yes; }) });
+  const ready = mountToday({ main: screen.main, save: keep, load: () => new Promise((yes) => { resolve = yes; }) });
   type(screen, '120 chai');
   assert.match(screen.view.innerHTML, /data-today-total>₹120</);
   assert.match(screen.view.innerHTML, /aria-busy="true"/);
@@ -393,6 +400,7 @@ test('once the router has moved on, a late load writes nothing', async () => {
   let resolve;
   const ready = mountToday({
     main: screen.main,
+    save: keep,
     isCurrent: () => current,
     load: () => new Promise((yes) => { resolve = yes; }),
   });
@@ -405,4 +413,119 @@ test('once the router has moved on, a late load writes nothing', async () => {
 
 test('mountToday throws on markup without the screen, so the router shows its error', () => {
   assert.throws(() => mountToday({ main: { querySelector: () => null }, load: async () => [] }));
+});
+
+/* ---------- Today and This month totals ---------- */
+
+const month = (html) => (html.match(/data-month-total>([^<]*)</) ?? [])[1];
+const today = (html) => (html.match(/data-today-total>([^<]*)</) ?? [])[1];
+
+test('an empty ledger shows both totals as ₹0, labelled Today and This month', async () => {
+  const screen = fakeScreen();
+  await mountToday({ main: screen.main, save: keep, load: async () => [] });
+  const html = screen.view.innerHTML;
+  assert.equal(today(html), '₹0');
+  assert.equal(month(html), '₹0');
+  assert.match(html, /<span class="total-label">Today<\/span><span class="amount total-amount" data-today-total>/);
+  assert.match(html, /<span class="total-label">This month<\/span><span class="amount total-amount" data-month-total>/);
+  assert.ok(html.indexOf('today-totals') < html.indexOf('today-empty'), 'totals sit above the prompt');
+});
+
+test('the total cards come first in every state and never show NaN or undefined', () => {
+  for (const status of ['empty', 'error', 'filled']) {
+    const html = renderTodayView({ status, entries: status === 'filled' ? sample : [] });
+    assert.ok(html.startsWith('<section class="today-totals"'), status);
+    assert.doesNotMatch(html, /NaN|undefined/);
+  }
+  const loading = renderToday();
+  assert.match(loading, /class="today-totals" aria-label="Totals" aria-busy="true"/);
+  assert.match(loading, /total-skeleton/);
+});
+
+test('saving 120 chai then 80 auto shows ₹200 today and ₹200 this month, in the same turn', async () => {
+  const screen = fakeScreen();
+  const saved = [];
+  let nextId = 0;
+  const save = async (entry) => {
+    saved.push(entry);
+    nextId += 1;
+    return { ...entry, id: nextId };
+  };
+  await mountToday({ main: screen.main, save, load: async () => [] });
+
+  type(screen, '120 chai');
+  assert.equal(today(screen.view.innerHTML), '₹120');
+  assert.equal(month(screen.view.innerHTML), '₹120');
+  assert.equal(screen.input.value, '');
+
+  const started = performance.now();
+  type(screen, '80 auto');
+  assert.ok(performance.now() - started < 100);
+  assert.equal(today(screen.view.innerHTML), '₹200');
+  assert.equal(month(screen.view.innerHTML), '₹200');
+
+  await tick();
+  assert.equal(today(screen.view.innerHTML), '₹200');
+  assert.deepEqual(saved.map((entry) => [entry.amountPaise, entry.note]), [[12000, 'chai'], [8000, 'auto']]);
+  assert.ok(saved.every((entry) => typeof entry.timestamp === 'number'));
+});
+
+test('the month total counts earlier days of the month; today counts only today', () => {
+  const at = new Date(2026, 8, 30, 10, 0);
+  const entries = [
+    { id: 1, amountPaise: 12000, note: 'chai', timestamp: at.getTime() },
+    { id: 2, amountPaise: 50000, note: 'rent share', timestamp: new Date(2026, 8, 2, 9, 0).getTime() },
+    { id: 3, amountPaise: 99900, note: 'last month', timestamp: new Date(2026, 7, 31, 23, 0).getTime() },
+  ];
+  const html = renderTodayView({ status: 'filled', entries, now: at });
+  assert.equal(today(html), '₹120');
+  assert.equal(month(html), '₹620');
+  assert.match(html, /1 spend</);
+  assert.doesNotMatch(html, /rent share|last month/);
+  assert.ok(isToday(entries[0], at));
+  assert.ok(!isToday({ amountPaise: 1 }, at));
+
+  const onlyEarlier = renderTodayView({ status: 'filled', entries: entries.slice(1), now: at });
+  assert.equal(month(onlyEarlier), '₹500');
+  assert.equal(today(onlyEarlier), '₹0');
+  assert.match(onlyEarlier, /today-empty/);
+  assert.equal(shownStatus({ status: 'filled', entries: entries.slice(1), now: at }), 'empty');
+});
+
+test('totals start from the ledger on load and a saved spend is not counted twice on Try again', async () => {
+  const screen = fakeScreen();
+  const stored = [];
+  let calls = 0;
+  const load = async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('disk');
+    return stored.slice().reverse();
+  };
+  const save = async (entry) => {
+    const record = { ...entry, id: stored.length + 1 };
+    stored.push(record);
+    return record;
+  };
+  await mountToday({ main: screen.main, save, load });
+  type(screen, '120 chai');
+  await tick();
+  clickAction(screen.view, 'retry');
+  await tick();
+  assert.equal(today(screen.view.innerHTML), '₹120');
+  assert.equal(month(screen.view.innerHTML), '₹120');
+  assert.match(screen.view.innerHTML, /1 spend</);
+});
+
+test('a save that fails takes the spend back out of the totals and puts the text back', async () => {
+  const screen = fakeScreen();
+  await mountToday({ main: screen.main, save: async () => { throw new Error('quota'); }, load: async () => [] });
+  type(screen, '120 chai');
+  assert.equal(today(screen.view.innerHTML), '₹120');
+  await tick();
+  assert.equal(today(screen.view.innerHTML), '₹0');
+  assert.equal(month(screen.view.innerHTML), '₹0');
+  assert.equal(screen.input.value, '120 chai');
+  assert.equal(screen.hint.textContent, SAVE_FAILED_HINT);
+  assert.ok(screen.hint.classList.contains('hint-error'));
+  assert.equal(screen.status.textContent, SAVE_FAILED_HINT);
 });

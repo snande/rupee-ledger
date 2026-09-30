@@ -1,9 +1,9 @@
 /*
- * Stand-in data source for the Today screen until the on-device ledger
- * lands. The ledger replaces this module with its own loadEntries(), so the
- * boundary stays one function returning a Promise of entries, each
- * { id, amountPaise, note }. Nothing here is stored: entries added during a
- * visit live only in the screen.
+ * Demo data source for the Today screen. js/data/ledger.js sends a visit here
+ * when its query names a state, so each screen state can be shown on demand.
+ * The boundary is one function returning a Promise of entries, each
+ * { id, amountPaise, note, timestamp }; the sample entries are dated at the
+ * moment they load, so they count as today's. Nothing here is stored.
  *
  * The `state` query parameter forces a screen state for demos, e.g.
  * '#/today?state=filled':
@@ -39,7 +39,7 @@ export function stubState(query = currentQuery()) {
 export function loadEntries(query = currentQuery()) {
   switch (stubState(query)) {
     case 'filled':
-      return Promise.resolve(SAMPLE_ENTRIES.map((entry) => ({ ...entry })));
+      return Promise.resolve(SAMPLE_ENTRIES.map((entry) => ({ ...entry, timestamp: Date.now() })));
     case 'loading':
       return new Promise(() => {});
     case 'error':
