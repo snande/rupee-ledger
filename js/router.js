@@ -5,7 +5,7 @@
  * which keeps it testable under `node --test`.
  */
 
-import { renderToday } from './screens/today.js';
+import { renderToday, mountToday } from './screens/today.js';
 import { renderNotFound } from './screens/not-found.js';
 
 export const DEFAULT_ROUTE = 'today';
@@ -16,11 +16,32 @@ export const routes = {
   today: renderToday,
 };
 
-/* '', '#', '#/' and '#/today/' all name a route: strip the '#/' prefix and
-   any trailing slash, and fall back to the default route when empty. */
+/* Route name → optional function run after the screen's markup is in
+   <main>, for screens that load data or listen for input. It gets
+   { main, query, isCurrent }; isCurrent() turns false once another render
+   has replaced this one, so a slow load cannot overwrite a newer screen. */
+export const mounts = {
+  today: mountToday,
+};
+
+/* A hash may carry a query after the path, as in '#/today?state=empty'. */
+function splitHash(hash) {
+  const text = String(hash ?? '').replace(/^#\/?/, '');
+  const at = text.indexOf('?');
+  return at === -1 ? [text, ''] : [text.slice(0, at), text.slice(at + 1)];
+}
+
+/* '', '#', '#/' and '#/today/' all name a route: strip the '#/' prefix, any
+   query and any trailing slash, and fall back to the default route when
+   empty. */
 export function routeName(hash) {
-  const path = String(hash ?? '').replace(/^#\/?/, '').replace(/\/+$/, '');
+  const path = splitHash(hash)[0].replace(/\/+$/, '');
   return path === '' ? DEFAULT_ROUTE : path;
+}
+
+/* The query after the route path, e.g. state=error in '#/today?state=error'. */
+export function routeQuery(hash) {
+  return new URLSearchParams(splitHash(hash)[1]);
 }
 
 /* Own properties only, so '#/constructor' is not found rather than a crash. */
@@ -42,10 +63,19 @@ export function markActiveTab(links, name) {
   }
 }
 
-export function renderRoute({ main, links = [], hash, table = routes }) {
+let renderCount = 0;
+
+export function renderRoute({ main, links = [], hash, table = routes, mountTable = mounts }) {
   const route = resolveRoute(hash, table);
+  const current = ++renderCount;
   main.innerHTML = route.render();
   markActiveTab(links, route.name);
+  const mount = route.name !== null && Object.prototype.hasOwnProperty.call(mountTable, route.name)
+    ? mountTable[route.name]
+    : null;
+  if (typeof mount === 'function') {
+    mount({ main, query: routeQuery(hash), isCurrent: () => current === renderCount });
+  }
   return route;
 }
 
