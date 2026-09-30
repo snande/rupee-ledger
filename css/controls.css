@@ -18,18 +18,51 @@ html {
   text-size-adjust: 100%;
 }
 
+/* The frame: app bar on top, the routed screen in <main>, tab bar at the
+   bottom. Body is a full-height column so a short screen still puts the tab
+   bar at the bottom of the viewport. */
 body {
+  display: flex;
+  flex-direction: column;
+  min-height: var(--viewport-height);
   margin: 0;
-  padding: var(--space-4);
+  padding: 0;
   background: var(--color-paper);
   color: var(--color-ink);
   font: var(--weight-regular) var(--text-3) / var(--leading-body) var(--font-ui);
 }
 
-header,
-main {
+.app-bar {
+  position: sticky;
+  top: 0;
+  z-index: var(--layer-frame);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: var(--border-hairline) solid var(--color-divider);
+  background: var(--color-paper);
+}
+
+.app-bar h1 {
   max-width: var(--page-max-width);
   margin: 0 auto;
+  font-size: var(--text-4);
+}
+
+/* min-width and overflow-wrap keep long content from widening the page past
+   a 360px screen. */
+main {
+  flex: 1 0 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: var(--page-max-width);
+  margin: 0 auto;
+  padding: var(--space-4);
+  overflow-wrap: anywhere;
+}
+
+/* The router focuses <main> after a route change so screen readers announce
+   the new screen; it is not a control, so it draws no ring. */
+main:focus {
+  outline: none;
 }
 
 h1,
@@ -90,6 +123,92 @@ label {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+}
+
+.not-found {
+  border-color: var(--color-muted);
+}
+
+/* The way back from a bad address is a real tap target, drawn like a
+   secondary button rather than a bare link. */
+.not-found-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-min-height);
+  padding: var(--space-2) var(--space-5);
+  border: var(--border-hairline) solid var(--color-muted);
+  border-radius: var(--radius-control);
+  background: var(--color-card);
+  color: var(--color-ink);
+  font: var(--weight-strong) var(--text-3) / var(--leading-tight) var(--font-ui);
+  text-decoration: none;
+}
+
+.not-found-link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-haldi);
+  outline-offset: var(--focus-ring-width);
+  border-color: var(--color-ink);
+}
+
+/* ---------- Tab bar ---------- */
+
+/* Sticky to the bottom of the viewport, so it stays in reach while the
+   screen scrolls; the safe-area padding clears the iOS home indicator. */
+.tab-bar {
+  position: sticky;
+  bottom: 0;
+  z-index: var(--layer-frame);
+  padding-bottom: var(--safe-area-bottom);
+  border-top: var(--border-hairline) solid var(--color-divider);
+  background: var(--color-card);
+}
+
+.tab-list {
+  display: flex;
+  max-width: var(--page-max-width);
+  margin: 0 auto;
+  padding: 0;
+  list-style: none;
+}
+
+.tab-list li {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+/* Tabs are real links with their own chrome: no underline or visited colour.
+   Muted text passes AA here because the bar is a card surface. */
+.tab {
+  -webkit-appearance: none;
+  appearance: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--tab-bar-height);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-top: var(--tab-indicator-width) solid transparent;
+  border-radius: 0;
+  background: var(--color-card);
+  color: var(--color-muted);
+  font: var(--weight-regular) var(--text-2) / var(--leading-tight) var(--font-ui);
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* Active tab: haldi indicator plus ink, bold text, so colour is not the only
+   signal. */
+.tab[aria-current="page"] {
+  border-top-color: var(--color-haldi);
+  color: var(--color-ink);
+  font-weight: var(--weight-strong);
+}
+
+/* Inset ring, so it is not clipped at the screen's bottom edge. */
+.tab:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-haldi);
+  outline-offset: calc(var(--focus-ring-width) * -2);
 }
 
 /* ---------- Buttons ---------- */
