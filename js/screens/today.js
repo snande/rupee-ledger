@@ -18,16 +18,17 @@
  * currency sign anywhere in this file is ₹.
  */
 
+import { formatPaise } from '../../src/format-amount.js';
 import { parseEntry } from '../../src/parse-entry.js';
-import { formatRupees, totals } from '../../src/totals.js';
-import { loadEntries, saveEntry } from '../data/ledger.js';
+import { INVALID_HINT, showHint, spendLabel, wireQuickEntry } from '../../src/quick-entry.js';
+import { totals } from '../../src/totals.js';
+import { ledgerFor, loadEntries } from '../data/ledger.js';
 
-export { formatRupees };
+export { formatPaise, INVALID_HINT };
 
 export const STATUSES = ['empty', 'loading', 'error', 'filled'];
 export const ERROR_MESSAGE = 'Today’s spends did not open.';
 export const ENTRY_HINT = 'Amount first, then what it was for';
-export const INVALID_HINT = 'Start with the amount, like 120 chai';
 
 const SKELETON_ROWS = 3;
 
@@ -44,8 +45,7 @@ export function escapeHtml(value) {
    naming the spend so it can be typed again. `restored` is true when its
    text went back into the entry box. */
 export function saveFailedHint(entry, restored) {
-  const spend = formatRupees(entry.amountPaise) + (entry.note ? ' ' + entry.note : '');
-  return spend + ' was not saved. ' + (restored ? 'Press Enter to try again.' : 'Type it again to save it.');
+  return spendLabel(entry) + ' was not saved. ' + (restored ? 'Press Enter to try again.' : 'Type it again to save it.');
 }
 
 /* True when the entry is dated on the same local calendar day as `now`. It
@@ -82,7 +82,7 @@ function entryRow(entry, newestId) {
     : '<span class="entry-note entry-note-empty">No note</span>';
   return '<li class="entry-row' + (isNew ? ' entry-new' : '') + '">' +
     note +
-    '<span class="amount entry-amount">' + formatRupees(entry.amountPaise) + '</span>' +
+    '<span class="amount entry-amount">' + formatPaise(entry.amountPaise) + '</span>' +
     '</li>';
 }
 
@@ -97,7 +97,7 @@ function totalCard(key, label, paise, known) {
     value = '<span class="amount total-amount total-unknown" data-' + key + '-total aria-hidden="true">—</span>' +
       '<span class="visually-hidden">not known</span>';
   } else {
-    value = '<span class="amount total-amount" data-' + key + '-total>' + formatRupees(paise) + '</span>';
+    value = '<span class="amount total-amount" data-' + key + '-total>' + formatPaise(paise) + '</span>';
   }
   return '<p class="card total-card' + (key === 'today' ? ' total-card-today' : '') + '">' +
     '<span class="total-label">' + label + '</span>' +
@@ -122,7 +122,7 @@ function listView(entries, newestId) {
       '<span class="today-list-label" id="today-list-label">Spent today</span>' +
       '<span class="today-list-count">' + count + '</span>' +
     '</p>' +
-    '<ul class="entry-list">' + entries.map((entry) => entryRow(entry, newestId)).join('') + '</ul>' +
+    '<ul class="entry-list" id="today-list">' + entries.map((entry) => entryRow(entry, newestId)).join('') + '</ul>' +
   '</section>';
 }
 
@@ -195,24 +195,26 @@ export function renderToday(state = { status: 'loading' }) {
 /*
  * Wires the rendered screen: focuses the entry box, loads the entries and
  * maps the promise onto the views (pending → loading, [] → empty, entries →
- * filled, rejected → error with Try again). Enter adds the typed spend at the
- * top and re-renders both totals in the same task, clears the box and keeps
- * focus there, then hands the spend to save(), which writes it to the
- * on-device ledger. This submit handler is the one save path in the app, so
- * it is where the totals hook in. A save that fails takes the spend back out
- * of the list and totals, puts its text back in an empty box and names it in
- * the hint. Spends added here stay listed across Try again, above whatever
- * the load brings back, until the load returns their stored copy.
- * isCurrent() turns false once the router has replaced this screen, so a
- * late load writes nothing. Returns the first load's promise, which never
- * rejects.
+ * filled, rejected → error with Try again). Enter goes through
+ * wireQuickEntry in src/quick-entry.js, the one save path in the app: it
+ * parses the line, has draw() below add the spend at the top of
+ * #today-list and re-render both totals in the same task, then writes it
+ * with the ledger's add() without waiting, clears the box and keeps focus
+ * there. A write that fails takes the spend back out of the list and totals,
+ * puts its text back in an empty box and names it in the hint. Spends added
+ * here stay listed across Try again, above whatever the load brings back,
+ * until the load returns their stored copy.
+ * `ledger` defaults to src/ledger.js, or on a demo visit to one that stores
+ * nothing. isCurrent() turns false once the router has replaced this screen,
+ * so a late load writes nothing. Returns the first load's promise, which
+ * never rejects.
  */
 export function mountToday({
   main,
   query = new URLSearchParams(),
   isCurrent = () => true,
   load = loadEntries,
-  save = saveEntry,
+  ledger = ledgerFor(query),
 }) {
   const root = main.querySelector('.today');
   const view = main.querySelector('[data-today-view]');
@@ -238,12 +240,7 @@ export function mountToday({
     view.innerHTML = renderTodayView(state);
   };
 
-  const setHint = (text, invalid) => {
-    hint.textContent = text;
-    hint.classList.toggle('hint-error', invalid);
-    if (invalid) input.setAttribute('aria-invalid', 'true');
-    else input.removeAttribute('aria-invalid');
-  };
+  const setHint = (text, invalid) => showHint(hint, input, text, invalid);
 
   const announce = (text) => {
     if (announcer) announcer.textContent = text;
@@ -265,19 +262,21 @@ export function mountToday({
     return added.length !== before;
   };
 
-  function persist(entry, text) {
-    let saving;
-    try {
-      saving = Promise.resolve(save(entry, query));
-    } catch (error) {
-      saving = Promise.reject(error);
-    }
-    saving.then(
-      (stored) => {
+  /* Puts a spend Enter has parsed on screen at once, and says what to do
+     when its write settles. */
+  function draw({ amountPaise, note, createdAt }, text) {
+    addedCount += 1;
+    const entry = { id: 'added-' + addedCount, amountPaise, note, timestamp: createdAt };
+    added = [entry].concat(added);
+    newestId = entry.id;
+    show();
+    announce('Added ' + spendLabel(entry));
+    return {
+      saved(stored) {
         if (stored && stored.id !== undefined && stored.id !== null) entry.ledgerId = stored.id;
         if (settle()) show();
       },
-      () => {
+      failed() {
         if (!added.includes(entry)) return;
         added = added.filter((item) => item !== entry);
         if (newestId === entry.id) newestId = null;
@@ -289,7 +288,7 @@ export function mountToday({
         setHint(message, true);
         announce(message);
       },
-    );
+    };
   }
 
   /* Restart the shake animation, so each bad Enter shakes once. */
@@ -326,43 +325,24 @@ export function mountToday({
     );
   }
 
-  form.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const text = input.value;
-    if (text.trim() === '') {
-      input.focus();
-      return;
-    }
-    const parsed = parseEntry(text);
-    if (!parsed) {
-      setHint(INVALID_HINT, true);
+  wireQuickEntry({
+    form,
+    input,
+    hint,
+    draw,
+    ledger,
+    restingHint: ENTRY_HINT,
+    onInvalid: () => {
       shake();
       announce(INVALID_HINT);
-      input.focus();
-      return;
-    }
-    addedCount += 1;
-    const entry = {
-      id: 'added-' + addedCount,
-      amountPaise: parsed.amountPaise,
-      note: parsed.note,
-      timestamp: Date.now(),
-    };
-    added = [entry].concat(added);
-    newestId = entry.id;
-    input.value = '';
-    setHint(ENTRY_HINT, false);
-    show();
-    announce('Added ' + formatRupees(entry.amountPaise) + (entry.note ? ' ' + entry.note : ''));
-    input.focus();
-    persist(entry, text);
+    },
   });
 
   /* Live preview under the box: '₹120 · chai' while the line parses. */
   input.addEventListener('input', () => {
     const text = input.value;
     const parsed = text.trim() === '' ? null : parseEntry(text);
-    if (parsed) setHint(formatRupees(parsed.amountPaise) + (parsed.note ? ' · ' + parsed.note : ''), false);
+    if (parsed) setHint(formatPaise(parsed.amountPaise) + (parsed.note ? ' · ' + parsed.note : ''), false);
     else setHint(ENTRY_HINT, false);
   });
 

@@ -3,18 +3,18 @@
  * src/ledger.js, behind the same boundary the stub has. loadEntries()
  * resolves this month's entries, newest first, as { id, amountPaise, note,
  * timestamp }: enough for the Today and This month totals and today's list.
- * saveEntry() writes one entry the screen has just shown.
+ * ledgerFor() names the ledger the quick-entry box writes to.
  *
- * Records are written by src/ledger.js's add(), so each carries
- * schemaVersion 1 and its amount in integer paise; no rupee conversion
- * happens here. A record with a version the ledger does not know makes the
+ * Records are written by src/ledger.js's add(), called straight from
+ * src/quick-entry.js, so each carries schemaVersion 1 and its amount in
+ * integer paise; no rupee conversion happens here. A record with a version the ledger does not know makes the
  * load reject, and the screen reports that rather than misreading it.
  *
  * A known `state` query, as in '#/today?state=filled', still goes to the stub
  * so each screen state can be shown on demand; those visits store nothing.
  */
 
-import { add, listByMonth } from '../../src/ledger.js';
+import * as ledger from '../../src/ledger.js';
 import { currentQuery, requestedState, loadEntries as loadStubEntries } from './stub.js';
 
 /* True when the query asks for a stub state rather than the real ledger. */
@@ -32,20 +32,17 @@ export function fromRecord(record) {
   };
 }
 
-export async function loadEntries(query = currentQuery(), { list = listByMonth, now = new Date() } = {}) {
+export async function loadEntries(query = currentQuery(), { list = ledger.listByMonth, now = new Date() } = {}) {
   if (isDemo(query)) return loadStubEntries(query);
   const records = await list(now);
   return records.map(fromRecord).reverse();
 }
 
-/* Resolves with the stored entry, carrying the ledger's id, once the write
-   has committed; resolves null on a demo visit, which stores nothing. */
-export async function saveEntry(entry, query = currentQuery(), { write = add } = {}) {
-  if (isDemo(query)) return null;
-  const record = await write({
-    amountPaise: entry.amountPaise,
-    note: entry.note,
-    createdAt: entry.timestamp,
-  });
-  return fromRecord(record);
+/* On a demo visit Enter still shows the spend, but nothing is stored. */
+const DEMO_LEDGER = Object.freeze({ add: async () => null });
+
+/* The ledger the quick-entry box writes to: src/ledger.js itself, or on a
+   demo visit one whose add() stores nothing and resolves null. */
+export function ledgerFor(query = currentQuery()) {
+  return isDemo(query) ? DEMO_LEDGER : ledger;
 }

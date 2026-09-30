@@ -6,7 +6,7 @@ import {
   ENTRY_HINT,
   ERROR_MESSAGE,
   INVALID_HINT,
-  formatRupees,
+  formatPaise,
   isToday,
   saveFailedHint,
   mountToday,
@@ -14,6 +14,9 @@ import {
   renderTodayView,
   shownStatus,
 } from './today.js';
+import { formatPaise as sharedFormatPaise } from '../../src/format-amount.js';
+import { INVALID_HINT as QUICK_ENTRY_HINT } from '../../src/quick-entry.js';
+import { fromRecord } from '../data/ledger.js';
 
 const now = Date.now();
 const sample = [
@@ -21,8 +24,8 @@ const sample = [
   { id: 'b', amountPaise: 4550, note: 'Auto <to> station', timestamp: now },
 ];
 
-/* A save that succeeds without a ledger, as on a demo visit. */
-const keep = async () => null;
+/* A ledger whose add() succeeds and stores nothing, as on a demo visit. */
+const keep = { add: async () => null };
 
 /* Just enough of an element for the screen: attributes, classes, events. */
 function fakeElement() {
@@ -93,15 +96,18 @@ function type(screen, text) {
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-test('formatRupees uses ₹ with Indian grouping and paise only when present', () => {
-  assert.equal(formatRupees(12000), '₹120');
-  assert.equal(formatRupees(4550), '₹45.50');
-  assert.equal(formatRupees(5), '₹0.05');
-  assert.equal(formatRupees(0), '₹0');
-  assert.equal(formatRupees(123450 * 100), '₹1,23,450');
-  assert.equal(formatRupees(1234567 * 100), '₹12,34,567');
-  assert.equal(formatRupees(100000 * 100), '₹1,00,000');
-  assert.equal(formatRupees(999 * 100), '₹999');
+test('amounts go through the shared formatPaise: ₹, Indian grouping, paise only when present', () => {
+  assert.equal(formatPaise, sharedFormatPaise);
+  assert.equal(formatPaise(12000), '₹120');
+  assert.equal(formatPaise(4550), '₹45.5');
+  assert.equal(formatPaise(5), '₹0.05');
+  assert.equal(formatPaise(0), '₹0');
+  assert.equal(formatPaise(123450 * 100), '₹1,23,450');
+  assert.equal(formatPaise(1234567 * 100), '₹12,34,567');
+  assert.equal(formatPaise(100000 * 100), '₹1,00,000');
+  assert.equal(formatPaise(999 * 100), '₹999');
+  assert.equal(INVALID_HINT, QUICK_ENTRY_HINT);
+  assert.equal(INVALID_HINT, 'Start with an amount, e.g. 120 chai');
 });
 
 test('each status renders its own distinct view', () => {
@@ -126,7 +132,7 @@ test('each status renders its own distinct view', () => {
 
   assert.match(views.filled, /class="entry-list"/);
   assert.match(views.filled, /Electricity top-up<\/span><span class="amount entry-amount">₹1,245<\/span>/);
-  assert.match(views.filled, /data-today-total>₹1,290.50</);
+  assert.match(views.filled, /data-today-total>₹1,290.5</);
   assert.match(views.filled, /2 spends/);
 });
 
@@ -230,7 +236,7 @@ test('every tap target on the screen is at least 44 by 44 CSS pixels', async () 
 test('on open the entry box has focus and the screen shows loading until the load settles', async () => {
   const screen = fakeScreen();
   let resolve;
-  const ready = mountToday({ main: screen.main, save: keep, load: () => new Promise((yes) => { resolve = yes; }) });
+  const ready = mountToday({ main: screen.main, ledger: keep, load: () => new Promise((yes) => { resolve = yes; }) });
   assert.equal(screen.input.focusCount, 1);
   assert.match(screen.view.innerHTML, /aria-busy="true"/);
   assert.equal(screen.root.getAttribute('data-status'), 'loading');
@@ -243,7 +249,7 @@ test('on open the entry box has focus and the screen shows loading until the loa
 
 test('a load that resolves [] shows the empty view, and its call to action focuses the box', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, save: keep, load: async () => [] });
+  await mountToday({ main: screen.main, ledger: keep, load: async () => [] });
   assert.match(screen.view.innerHTML, /today-empty/);
   assert.equal(screen.root.getAttribute('data-status'), 'empty');
   const before = screen.input.focusCount;
@@ -258,7 +264,7 @@ test('a load that rejects shows the error view, and Try again loads again', asyn
     calls += 1;
     return calls === 1 ? Promise.reject(new Error('disk')) : Promise.resolve(sample);
   };
-  await mountToday({ main: screen.main, save: keep, load });
+  await mountToday({ main: screen.main, ledger: keep, load });
   assert.match(screen.view.innerHTML, /today-error/);
   assert.match(screen.view.innerHTML, /Try again/);
   assert.equal(screen.root.getAttribute('data-status'), 'error');
@@ -280,7 +286,7 @@ test('a spend added during an error stays listed across Try again, and the total
     if (calls === 2) return Promise.reject(new Error('disk again'));
     return Promise.resolve(sample);
   };
-  await mountToday({ main: screen.main, save: keep, load });
+  await mountToday({ main: screen.main, ledger: keep, load });
 
   type(screen, '120 chai');
   assert.equal(screen.root.getAttribute('data-status'), 'filled');
@@ -300,14 +306,14 @@ test('a spend added during an error stays listed across Try again, and the total
   await tick();
   assert.equal(calls, 3);
   assert.equal(screen.root.getAttribute('data-status'), 'filled');
-  assert.match(screen.view.innerHTML, /data-today-total>₹1,410.50</);
+  assert.match(screen.view.innerHTML, /data-today-total>₹1,410.5</);
   assert.match(screen.view.innerHTML, /3 spends/);
   assert.doesNotMatch(screen.view.innerHTML, /today-error/);
 });
 
 test('a load that throws synchronously also shows the error view', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, save: keep, load: () => { throw new Error('no'); } });
+  await mountToday({ main: screen.main, ledger: keep, load: () => { throw new Error('no'); } });
   assert.match(screen.view.innerHTML, /today-error/);
 });
 
@@ -316,7 +322,7 @@ test('the query from the router reaches the data source', async () => {
   const seen = [];
   await mountToday({
     main: screen.main,
-    save: keep,
+    ledger: keep,
     query: new URLSearchParams('state=filled'),
     load: async (query) => { seen.push(query.get('state')); return []; },
   });
@@ -325,7 +331,7 @@ test('the query from the router reaches the data source', async () => {
 
 test('typing 120 chai and pressing Enter saves it, clears the box and updates the total at once', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, save: keep, load: async () => [] });
+  await mountToday({ main: screen.main, ledger: keep, load: async () => [] });
 
   screen.input.value = '120 chai';
   screen.input.dispatch('input');
@@ -346,13 +352,13 @@ test('typing 120 chai and pressing Enter saves it, clears the box and updates th
   assert.ok(screen.input.focusCount >= 2, 'focus stays in the box');
 
   type(screen, '45.50 auto');
-  assert.match(screen.view.innerHTML, /data-today-total>₹165.50</);
+  assert.match(screen.view.innerHTML, /data-today-total>₹165.5</);
   assert.match(screen.view.innerHTML, /entry-new"><span class="entry-note">auto/);
 });
 
 test('a line with no amount shakes, shows an inline hint and keeps the text', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, save: keep, load: async () => [] });
+  await mountToday({ main: screen.main, ledger: keep, load: async () => [] });
   const before = screen.view.innerHTML;
 
   type(screen, 'chai');
@@ -374,7 +380,7 @@ test('a line with no amount shakes, shows an inline hint and keeps the text', as
 
 test('an empty Enter does nothing', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, save: keep, load: async () => [] });
+  await mountToday({ main: screen.main, ledger: keep, load: async () => [] });
   const before = screen.view.innerHTML;
   type(screen, '   ');
   assert.equal(screen.view.innerHTML, before);
@@ -384,7 +390,7 @@ test('an empty Enter does nothing', async () => {
 test('a spend added while loading shows at once and joins the loaded ones', async () => {
   const screen = fakeScreen();
   let resolve;
-  const ready = mountToday({ main: screen.main, save: keep, load: () => new Promise((yes) => { resolve = yes; }) });
+  const ready = mountToday({ main: screen.main, ledger: keep, load: () => new Promise((yes) => { resolve = yes; }) });
   type(screen, '120 chai');
   assert.match(screen.view.innerHTML, /entry-new"><span class="entry-note">chai</);
   assert.match(screen.view.innerHTML, /total-skeleton/, 'the totals wait for the ledger');
@@ -393,7 +399,7 @@ test('a spend added while loading shows at once and joins the loaded ones', asyn
 
   resolve(sample);
   await ready;
-  assert.match(screen.view.innerHTML, /data-today-total>₹1,410.50</);
+  assert.match(screen.view.innerHTML, /data-today-total>₹1,410.5</);
   assert.doesNotMatch(screen.view.innerHTML, /aria-busy/);
 });
 
@@ -403,7 +409,7 @@ test('once the router has moved on, a late load writes nothing', async () => {
   let resolve;
   const ready = mountToday({
     main: screen.main,
-    save: keep,
+    ledger: keep,
     isCurrent: () => current,
     load: () => new Promise((yes) => { resolve = yes; }),
   });
@@ -425,7 +431,7 @@ const month = (html) => (html.match(/data-month-total[^>]*>([^<]*)</) ?? [])[1];
 
 test('an empty ledger shows both totals as ₹0, labelled Today and This month', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, save: keep, load: async () => [] });
+  await mountToday({ main: screen.main, ledger: keep, load: async () => [] });
   const html = screen.view.innerHTML;
   assert.equal(today(html), '₹0');
   assert.equal(month(html), '₹0');
@@ -448,7 +454,7 @@ test('the total cards come first in every state and never show NaN or undefined'
 
 test('a failed load with nothing known shows a dash in both totals, never ₹0', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, save: keep, load: async () => { throw new Error('disk'); } });
+  await mountToday({ main: screen.main, ledger: keep, load: async () => { throw new Error('disk'); } });
   const html = screen.view.innerHTML;
   assert.match(html, /today-error/);
   assert.doesNotMatch(html, /data-today-total>₹0/);
@@ -464,12 +470,12 @@ test('saving 120 chai then 80 auto shows ₹200 today and ₹200 this month, in 
   const screen = fakeScreen();
   const saved = [];
   let nextId = 0;
-  const save = async (entry) => {
+  const add = async (entry) => {
     saved.push(entry);
     nextId += 1;
     return { ...entry, id: nextId };
   };
-  await mountToday({ main: screen.main, save, load: async () => [] });
+  await mountToday({ main: screen.main, ledger: { add }, load: async () => [] });
 
   type(screen, '120 chai');
   assert.equal(today(screen.view.innerHTML), '₹120');
@@ -485,7 +491,8 @@ test('saving 120 chai then 80 auto shows ₹200 today and ₹200 this month, in 
   await tick();
   assert.equal(today(screen.view.innerHTML), '₹200');
   assert.deepEqual(saved.map((entry) => [entry.amountPaise, entry.note]), [[12000, 'chai'], [8000, 'auto']]);
-  assert.ok(saved.every((entry) => typeof entry.timestamp === 'number'));
+  assert.ok(saved.every((entry) => typeof entry.createdAt === 'number'));
+  assert.deepEqual(Object.keys(saved[0]).sort(), ['amountPaise', 'createdAt', 'note']);
 });
 
 test('the month total counts earlier days of the month; today counts only today', () => {
@@ -518,14 +525,14 @@ test('a saved spend is not counted twice when Try again loads it back', async ()
   const load = async () => {
     calls += 1;
     if (calls === 1) throw new Error('disk');
-    return stored.slice().reverse();
+    return stored.map(fromRecord).reverse();
   };
-  const save = async (entry) => {
+  const add = async (entry) => {
     const record = { ...entry, id: stored.length + 1 };
     stored.push(record);
     return record;
   };
-  await mountToday({ main: screen.main, save, load });
+  await mountToday({ main: screen.main, ledger: { add }, load });
   type(screen, '120 chai');
   await tick();
   clickAction(screen.view, 'retry');
@@ -543,15 +550,15 @@ test('a load that reads the committed spend before its save resolves still count
   const load = async () => {
     calls += 1;
     if (calls === 1) throw new Error('disk');
-    return stored.slice().reverse();
+    return stored.map(fromRecord).reverse();
   };
   /* The record commits at once, but the save's promise resolves later. */
-  const save = (entry) => {
+  const add = (entry) => {
     const record = { ...entry, id: 1 };
     stored.push(record);
     return new Promise((resolve) => { finishSave = () => resolve(record); });
   };
-  await mountToday({ main: screen.main, save, load });
+  await mountToday({ main: screen.main, ledger: { add }, load });
   type(screen, '120 chai');
   clickAction(screen.view, 'retry');
   await tick();
@@ -566,7 +573,7 @@ test('a load that reads the committed spend before its save resolves still count
 
 test('a save that fails takes the spend back out, puts the text back and names it', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, save: async () => { throw new Error('quota'); }, load: async () => [] });
+  await mountToday({ main: screen.main, ledger: { add: async () => { throw new Error('quota'); } }, load: async () => [] });
   type(screen, '120 chai');
   assert.equal(today(screen.view.innerHTML), '₹120');
   await tick();
@@ -581,8 +588,8 @@ test('a save that fails takes the spend back out, puts the text back and names i
 test('a save that fails while the next line is typed keeps that line and names the lost spend', async () => {
   const screen = fakeScreen();
   let failSave;
-  const save = () => new Promise((resolve, reject) => { failSave = () => reject(new Error('quota')); });
-  await mountToday({ main: screen.main, save, load: async () => [] });
+  const add = () => new Promise((resolve, reject) => { failSave = () => reject(new Error('quota')); });
+  await mountToday({ main: screen.main, ledger: { add }, load: async () => [] });
   type(screen, '120 chai');
   screen.input.value = '80 au';
   failSave();
@@ -590,5 +597,5 @@ test('a save that fails while the next line is typed keeps that line and names t
   assert.equal(screen.input.value, '80 au');
   assert.equal(screen.hint.textContent, '₹120 chai was not saved. Type it again to save it.');
   assert.equal(today(screen.view.innerHTML), '₹0');
-  assert.equal(saveFailedHint({ amountPaise: 4550, note: '' }, true), '₹45.50 was not saved. Press Enter to try again.');
+  assert.equal(saveFailedHint({ amountPaise: 4550, note: '' }, true), '₹45.5 was not saved. Press Enter to try again.');
 });

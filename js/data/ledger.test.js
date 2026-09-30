@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { fromRecord, isDemo, loadEntries, saveEntry } from './ledger.js';
+import { fromRecord, isDemo, ledgerFor, loadEntries } from './ledger.js';
 import { mountToday } from '../screens/today.js';
 import { add, closeLedger } from '../../src/ledger.js';
 import { addEntry } from '../../src/ledger/store.js';
@@ -75,13 +75,15 @@ test('a stored record reads as paise and a timestamp the totals understand', () 
   assert.deepEqual(totals([entry], new Date(at)), { today: 12000, month: 12000 });
 });
 
-test('saveEntry writes paise through the versioned ledger, and loadEntries reads them back', async () => {
+test('the quick-entry box writes through the versioned ledger add, and loadEntries reads it back', async () => {
   const at = new Date(2026, 8, 30, 9, 0).getTime();
-  const saved = await saveEntry({ amountPaise: 4550, note: 'auto', timestamp: at }, query(''));
-  assert.deepEqual(saved, { id: 1, amountPaise: 4550, note: 'auto', timestamp: at });
+  const ledger = ledgerFor(query(''));
+  assert.equal(ledger.add, add, 'no wrapper between the box and src/ledger.js');
+  const saved = await ledger.add({ amountPaise: 4550, note: 'auto', createdAt: at });
+  assert.deepEqual(fromRecord(saved), { id: 1, amountPaise: 4550, note: 'auto', timestamp: at });
   assert.deepEqual(storedRecords(), [{ id: 1, schemaVersion: 1, amountPaise: 4550, note: 'auto', createdAt: at }]);
 
-  await saveEntry({ amountPaise: 12000, note: 'chai', timestamp: at + 1 }, query(''));
+  await ledger.add({ amountPaise: 12000, note: 'chai', createdAt: at + 1 });
   const loaded = await loadEntries(query(''), { now: new Date(at) });
   assert.deepEqual(loaded.map((entry) => [entry.id, entry.amountPaise]), [[2, 12000], [1, 4550]], 'newest first');
 });
@@ -111,7 +113,7 @@ test('a state query goes to the stub and stores nothing', async () => {
   const fail = async () => { throw new Error('the ledger should not be touched'); };
   assert.deepEqual(await loadEntries(query('state=empty'), { list: fail }), []);
   assert.equal((await loadEntries(query('state=filled'), { list: fail })).length, 4);
-  assert.equal(await saveEntry({ amountPaise: 100, note: '', timestamp: 1 }, query('state=filled'), { write: fail }), null);
+  assert.equal(await ledgerFor(query('state=filled')).add({ amountPaise: 100, note: '', createdAt: 1 }), null);
   assert.equal(fake.transactions.length, 0);
 });
 
@@ -146,7 +148,7 @@ test('without IndexedDB the load and the save reject, so the screen can say so',
   await closeLedger();
   globalThis.indexedDB = undefined;
   await assert.rejects(loadEntries(query('')));
-  await assert.rejects(saveEntry({ amountPaise: 100, note: '', timestamp: 1 }, query('')));
+  await assert.rejects(ledgerFor(query('')).add({ amountPaise: 100, note: '', createdAt: 1 }));
 });
 
 test('the module is offline and shows no currency but ₹', async () => {
