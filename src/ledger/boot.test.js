@@ -196,6 +196,38 @@ test('initLedger still loads entries when persist() throws synchronously', async
   assert.deepEqual(await initLedger(), { entries: stored, persisted: false });
 });
 
+test('initLedger still loads entries, unpersisted, when persist() never settles', async () => {
+  const stored = await seedEntries();
+  // Like a permission prompt the user never answers.
+  const nav = navigatorWithPersist(() => new Promise(() => {}));
+  setNavigator(nav);
+
+  const started = Date.now();
+  assert.deepEqual(await initLedger(), { entries: stored, persisted: false });
+  const elapsed = Date.now() - started;
+
+  assert.equal(nav.persistCalls, 1);
+  // The default deadline is 1000ms; allow slack for a slow CI machine.
+  assert.ok(elapsed >= 900, `resolved after ${elapsed}ms, before the persist deadline`);
+  assert.ok(elapsed < 2500, `resolved after ${elapsed}ms, past the persist deadline`);
+});
+
+test('initLedger honours a shorter persistTimeoutMs when persist() never settles', async () => {
+  const stored = await seedEntries();
+  setNavigator(navigatorWithPersist(() => new Promise(() => {})));
+
+  const started = Date.now();
+  assert.deepEqual(await initLedger({ persistTimeoutMs: 20 }), { entries: stored, persisted: false });
+  assert.ok(Date.now() - started < 500);
+});
+
+test('initLedger reports a grant that arrives before the deadline', async () => {
+  const stored = await seedEntries();
+  setNavigator(navigatorWithPersist(() => new Promise((resolve) => setTimeout(resolve, 30, true))));
+
+  assert.deepEqual(await initLedger({ persistTimeoutMs: 500 }), { entries: stored, persisted: true });
+});
+
 test('initLedger resolves with persisted: false when the storage API is absent', async () => {
   const stored = await seedEntries();
 
