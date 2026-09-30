@@ -6,9 +6,9 @@ import {
   ENTRY_HINT,
   ERROR_MESSAGE,
   INVALID_HINT,
-  SAVE_FAILED_HINT,
   formatRupees,
   isToday,
+  saveFailedHint,
   mountToday,
   renderToday,
   renderTodayView,
@@ -271,7 +271,7 @@ test('a load that rejects shows the error view, and Try again loads again', asyn
   assert.equal(screen.root.getAttribute('data-status'), 'filled');
 });
 
-test('a spend added during an error stays listed, with a correct total, across Try again', async () => {
+test('a spend added during an error stays listed across Try again, and the totals wait for a load', async () => {
   const screen = fakeScreen();
   let calls = 0;
   const load = () => {
@@ -284,14 +284,16 @@ test('a spend added during an error stays listed, with a correct total, across T
 
   type(screen, '120 chai');
   assert.equal(screen.root.getAttribute('data-status'), 'filled');
-  assert.match(screen.view.innerHTML, /data-today-total>₹120</);
+  assert.match(screen.view.innerHTML, /entry-new"><span class="entry-note">chai</);
+  assert.match(screen.view.innerHTML, /data-today-total aria-hidden="true">—</, 'no part-sum while the ledger is unread');
   assert.match(screen.view.innerHTML, /today-error/, 'the failed load is still reported');
 
   clickAction(screen.view, 'retry');
   await tick();
   assert.equal(calls, 2);
   assert.equal(screen.root.getAttribute('data-status'), 'filled');
-  assert.match(screen.view.innerHTML, /data-today-total>₹120</);
+  assert.match(screen.view.innerHTML, /1 spend</);
+  assert.doesNotMatch(screen.view.innerHTML, /data-today-total>₹/);
   assert.match(screen.view.innerHTML, /today-error/);
 
   clickAction(screen.view, 'retry');
@@ -384,7 +386,8 @@ test('a spend added while loading shows at once and joins the loaded ones', asyn
   let resolve;
   const ready = mountToday({ main: screen.main, save: keep, load: () => new Promise((yes) => { resolve = yes; }) });
   type(screen, '120 chai');
-  assert.match(screen.view.innerHTML, /data-today-total>₹120</);
+  assert.match(screen.view.innerHTML, /entry-new"><span class="entry-note">chai</);
+  assert.match(screen.view.innerHTML, /total-skeleton/, 'the totals wait for the ledger');
   assert.match(screen.view.innerHTML, /aria-busy="true"/);
   assert.equal(screen.root.getAttribute('data-status'), 'filled');
 
@@ -417,8 +420,8 @@ test('mountToday throws on markup without the screen, so the router shows its er
 
 /* ---------- Today and This month totals ---------- */
 
-const month = (html) => (html.match(/data-month-total>([^<]*)</) ?? [])[1];
-const today = (html) => (html.match(/data-today-total>([^<]*)</) ?? [])[1];
+const today = (html) => (html.match(/data-today-total[^>]*>([^<]*)</) ?? [])[1];
+const month = (html) => (html.match(/data-month-total[^>]*>([^<]*)</) ?? [])[1];
 
 test('an empty ledger shows both totals as ₹0, labelled Today and This month', async () => {
   const screen = fakeScreen();
@@ -432,7 +435,7 @@ test('an empty ledger shows both totals as ₹0, labelled Today and This month',
 });
 
 test('the total cards come first in every state and never show NaN or undefined', () => {
-  for (const status of ['empty', 'error', 'filled']) {
+  for (const status of ['empty', 'loading', 'error', 'filled']) {
     const html = renderTodayView({ status, entries: status === 'filled' ? sample : [] });
     assert.ok(html.startsWith('<section class="today-totals"'), status);
     assert.doesNotMatch(html, /NaN|undefined/);
@@ -440,6 +443,21 @@ test('the total cards come first in every state and never show NaN or undefined'
   const loading = renderToday();
   assert.match(loading, /class="today-totals" aria-label="Totals" aria-busy="true"/);
   assert.match(loading, /total-skeleton/);
+  assert.doesNotMatch(loading, /data-(today|month)-total/);
+});
+
+test('a failed load with nothing known shows a dash in both totals, never ₹0', async () => {
+  const screen = fakeScreen();
+  await mountToday({ main: screen.main, save: keep, load: async () => { throw new Error('disk'); } });
+  const html = screen.view.innerHTML;
+  assert.match(html, /today-error/);
+  assert.doesNotMatch(html, /data-today-total>₹0/);
+  assert.doesNotMatch(html, /data-month-total>₹0/);
+  assert.doesNotMatch(html, /data-(today|month)-total[^>]*>₹/);
+  assert.equal(today(html), '—');
+  assert.equal(month(html), '—');
+  assert.match(html, /<span class="visually-hidden">not known<\/span>/);
+  assert.equal(renderTodayView({ status: 'error' }), renderTodayView({ status: 'error', entries: [] }));
 });
 
 test('saving 120 chai then 80 auto shows ₹200 today and ₹200 this month, in the same turn', async () => {
@@ -483,6 +501,7 @@ test('the month total counts earlier days of the month; today counts only today'
   assert.match(html, /1 spend</);
   assert.doesNotMatch(html, /rent share|last month/);
   assert.ok(isToday(entries[0], at));
+  assert.ok(isToday({ ts: at.getTime() }, at), 'reads ts as totals() does');
   assert.ok(!isToday({ amountPaise: 1 }, at));
 
   const onlyEarlier = renderTodayView({ status: 'filled', entries: entries.slice(1), now: at });
@@ -492,7 +511,7 @@ test('the month total counts earlier days of the month; today counts only today'
   assert.equal(shownStatus({ status: 'filled', entries: entries.slice(1), now: at }), 'empty');
 });
 
-test('totals start from the ledger on load and a saved spend is not counted twice on Try again', async () => {
+test('a saved spend is not counted twice when Try again loads it back', async () => {
   const screen = fakeScreen();
   const stored = [];
   let calls = 0;
@@ -516,7 +535,36 @@ test('totals start from the ledger on load and a saved spend is not counted twic
   assert.match(screen.view.innerHTML, /1 spend</);
 });
 
-test('a save that fails takes the spend back out of the totals and puts the text back', async () => {
+test('a load that reads the committed spend before its save resolves still counts it once', async () => {
+  const screen = fakeScreen();
+  const stored = [];
+  let finishSave;
+  let calls = 0;
+  const load = async () => {
+    calls += 1;
+    if (calls === 1) throw new Error('disk');
+    return stored.slice().reverse();
+  };
+  /* The record commits at once, but the save's promise resolves later. */
+  const save = (entry) => {
+    const record = { ...entry, id: 1 };
+    stored.push(record);
+    return new Promise((resolve) => { finishSave = () => resolve(record); });
+  };
+  await mountToday({ main: screen.main, save, load });
+  type(screen, '120 chai');
+  clickAction(screen.view, 'retry');
+  await tick();
+  assert.equal(today(screen.view.innerHTML), '₹120', 'counted once while the save is in flight');
+  assert.match(screen.view.innerHTML, /1 spend</);
+
+  finishSave();
+  await tick();
+  assert.equal(today(screen.view.innerHTML), '₹120');
+  assert.match(screen.view.innerHTML, /1 spend</);
+});
+
+test('a save that fails takes the spend back out, puts the text back and names it', async () => {
   const screen = fakeScreen();
   await mountToday({ main: screen.main, save: async () => { throw new Error('quota'); }, load: async () => [] });
   type(screen, '120 chai');
@@ -525,7 +573,22 @@ test('a save that fails takes the spend back out of the totals and puts the text
   assert.equal(today(screen.view.innerHTML), '₹0');
   assert.equal(month(screen.view.innerHTML), '₹0');
   assert.equal(screen.input.value, '120 chai');
-  assert.equal(screen.hint.textContent, SAVE_FAILED_HINT);
+  assert.equal(screen.hint.textContent, '₹120 chai was not saved. Press Enter to try again.');
   assert.ok(screen.hint.classList.contains('hint-error'));
-  assert.equal(screen.status.textContent, SAVE_FAILED_HINT);
+  assert.equal(screen.status.textContent, screen.hint.textContent);
+});
+
+test('a save that fails while the next line is typed keeps that line and names the lost spend', async () => {
+  const screen = fakeScreen();
+  let failSave;
+  const save = () => new Promise((resolve, reject) => { failSave = () => reject(new Error('quota')); });
+  await mountToday({ main: screen.main, save, load: async () => [] });
+  type(screen, '120 chai');
+  screen.input.value = '80 au';
+  failSave();
+  await tick();
+  assert.equal(screen.input.value, '80 au');
+  assert.equal(screen.hint.textContent, '₹120 chai was not saved. Type it again to save it.');
+  assert.equal(today(screen.view.innerHTML), '₹0');
+  assert.equal(saveFailedHint({ amountPaise: 4550, note: '' }, true), '₹45.50 was not saved. Press Enter to try again.');
 });

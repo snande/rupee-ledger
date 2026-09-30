@@ -1,5 +1,6 @@
 // The versioned ledger API the entry box writes through: `add` saves one
-// entry, `listByDay` reads back one local calendar day. It shares the
+// entry, `listByDay` reads back one local calendar day and `listByMonth` one
+// local calendar month. It shares the
 // `rupee-ledger` database, `entries` store and `createdAt` index opened by
 // `./ledger/store.js`, and like that module it uses raw IndexedDB with no
 // library and no network, so every entry stays on the phone.
@@ -7,7 +8,7 @@
 // Every record written here carries `schemaVersion: 1`. The loader refuses
 // to guess at any other shape: a record with a different or missing version
 // (including the unversioned rupee records `addEntry` writes) makes
-// `listByDay` reject with an `UnknownSchemaVersionError` naming it, rather
+// `listByDay` and `listByMonth` reject with an `UnknownSchemaVersionError` naming it, rather
 // than return it as an entry with misread fields.
 //
 // `add` resolves only from the write transaction's `oncomplete`, once the
@@ -84,6 +85,27 @@ export async function listByDay(date) {
   // gains or loses an hour to a clock change still has the right bounds.
   const start = new Date(day.getFullYear(), day.getMonth(), day.getDate()).getTime();
   const end = new Date(day.getFullYear(), day.getMonth(), day.getDate() + 1).getTime();
+  return listRange(start, end);
+}
+
+/**
+ * The entries whose `createdAt` falls in the local calendar month containing
+ * `date`, oldest first; what the This month total is summed from. Rejects
+ * with `UnknownSchemaVersionError` like `listByDay`.
+ * @param {number | Date} date  any moment in the wanted month.
+ * @returns {Promise<Array<{ id: number, schemaVersion: 1, amountPaise: number,
+ *   note: string, createdAt: number }>>}
+ */
+export async function listByMonth(date) {
+  const day = new Date(toTimestamp(date, 'date'));
+  const start = new Date(day.getFullYear(), day.getMonth(), 1).getTime();
+  const end = new Date(day.getFullYear(), day.getMonth() + 1, 1).getTime();
+  return listRange(start, end);
+}
+
+// Every record with `start <= createdAt < end`, checked for a known schema
+// version before any of it is returned.
+async function listRange(start, end) {
   const range = globalThis.IDBKeyRange.bound(start, end, false, true);
   const db = await openLedger();
 

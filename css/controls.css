@@ -226,6 +226,11 @@ label {
   overflow-wrap: anywhere;
 }
 
+/* After a failed load the sums are not known: a muted dash, not a ₹0. */
+.total-unknown {
+  color: var(--color-muted);
+}
+
 .total-skeleton {
   width: 80%;
   height: var(--skeleton-total);

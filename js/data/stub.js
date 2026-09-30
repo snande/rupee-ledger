@@ -25,15 +25,20 @@ const SAMPLE_ENTRIES = [
 ];
 
 /* The query after the path in the page's hash, as in '#/today?state=error'. */
-function currentQuery() {
+export function currentQuery() {
   const hash = String(globalThis.location?.hash ?? '');
   const at = hash.indexOf('?');
   return new URLSearchParams(at === -1 ? '' : hash.slice(at + 1));
 }
 
-export function stubState(query = currentQuery()) {
+/* The demo state the query names, or null when it names none. */
+export function requestedState(query = currentQuery()) {
   const state = query && typeof query.get === 'function' ? query.get('state') : null;
-  return STUB_STATES.includes(state) ? state : DEFAULT_STUB_STATE;
+  return STUB_STATES.includes(state) ? state : null;
+}
+
+export function stubState(query = currentQuery()) {
+  return requestedState(query) ?? DEFAULT_STUB_STATE;
 }
 
 export function loadEntries(query = currentQuery()) {

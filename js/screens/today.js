@@ -9,7 +9,10 @@
  *          entries?: [{ id, amountPaise, note, timestamp }], message?: string,
  *          now?: Date }.
  * `entries` is every known entry; the totals are summed from all of them and
- * the list shows the ones dated today, on the device's calendar.
+ * the list shows the ones dated today, on the device's calendar. The totals
+ * are only shown once a load has succeeded: before that the ledger's sums
+ * are not known, so the cards show a skeleton while loading and a dash after
+ * a failed load, never a ₹0 or a part-sum that may not be true.
  * Amounts are integer paise and are only ever shown in rupees with ₹.
  * Strings are joined with + rather than template literals, so the only
  * currency sign anywhere in this file is ₹.
@@ -25,7 +28,6 @@ export const STATUSES = ['empty', 'loading', 'error', 'filled'];
 export const ERROR_MESSAGE = 'Today’s spends did not open.';
 export const ENTRY_HINT = 'Amount first, then what it was for';
 export const INVALID_HINT = 'Start with the amount, like 120 chai';
-export const SAVE_FAILED_HINT = 'That spend was not saved. Press Enter to try again.';
 
 const SKELETON_ROWS = 3;
 
@@ -38,7 +40,17 @@ export function escapeHtml(value) {
     .replace(/'/g, '&#39;');
 }
 
-/* True when the entry is dated on the same local calendar day as `now`. An
+/* What the hint and the announcer say when a spend could not be stored,
+   naming the spend so it can be typed again. `restored` is true when its
+   text went back into the entry box. */
+export function saveFailedHint(entry, restored) {
+  const spend = formatRupees(entry.amountPaise) + (entry.note ? ' ' + entry.note : '');
+  return spend + ' was not saved. ' + (restored ? 'Press Enter to try again.' : 'Type it again to save it.');
+}
+
+/* True when the entry is dated on the same local calendar day as `now`. It
+   reads the same `timestamp`, falling back to `ts`, that totals() in
+   src/totals.js sums by, so the list and the Today total always agree. An
    entry without a usable date is not today's, as it counts in no total. */
 export function isToday(entry, now = new Date()) {
   const at = new Date(entry?.timestamp ?? entry?.ts ?? NaN);
@@ -74,13 +86,19 @@ function entryRow(entry, newestId) {
     '</li>';
 }
 
-/* One total card: a 12px muted label above a 28px mono amount. While the
-   first load is pending and nothing is known yet, a skeleton bar stands in
-   for the amount rather than a ₹0 that is not true. */
-function totalCard(key, label, paise, pending) {
-  const value = pending
-    ? '<span class="skeleton-bar total-skeleton" aria-hidden="true"></span>'
-    : '<span class="amount total-amount" data-' + key + '-total>' + formatRupees(paise) + '</span>';
+/* One total card: a 12px muted label above a 28px mono amount. `known` is
+   'yes' once a load has succeeded; 'pending' draws a skeleton bar while the
+   first load runs, and 'no' a dash after a failed one. */
+function totalCard(key, label, paise, known) {
+  let value;
+  if (known === 'pending') {
+    value = '<span class="skeleton-bar total-skeleton" aria-hidden="true"></span>';
+  } else if (known === 'no') {
+    value = '<span class="amount total-amount total-unknown" data-' + key + '-total aria-hidden="true">—</span>' +
+      '<span class="visually-hidden">not known</span>';
+  } else {
+    value = '<span class="amount total-amount" data-' + key + '-total>' + formatRupees(paise) + '</span>';
+  }
   return '<p class="card total-card' + (key === 'today' ? ' total-card-today' : '') + '">' +
     '<span class="total-label">' + label + '</span>' +
     value +
@@ -89,11 +107,11 @@ function totalCard(key, label, paise, pending) {
 
 /* The Today and This month cards, side by side at the top of the screen and
    shown in every state, summed with totals() from src/totals.js. */
-export function totalsView(entries, now = new Date(), pending = false) {
+export function totalsView(entries, now = new Date(), known = 'yes') {
   const sums = totals(entries, now);
-  return '<section class="today-totals" aria-label="Totals"' + (pending ? ' aria-busy="true"' : '') + '>' +
-    totalCard('today', 'Today', sums.today, pending) +
-    totalCard('month', 'This month', sums.month, pending) +
+  return '<section class="today-totals" aria-label="Totals"' + (known === 'pending' ? ' aria-busy="true"' : '') + '>' +
+    totalCard('today', 'Today', sums.today, known) +
+    totalCard('month', 'This month', sums.month, known) +
   '</section>';
 }
 
@@ -140,12 +158,14 @@ function errorView(message) {
 }
 
 /* The part of the screen that follows the state. The total cards come
-   first in every state; today's spends already known are listed whatever
-   the status; loading and error add their block below, and a screen with no
-   spends today that is not loading or failing shows the prompt. */
+   first in every state, with sums only once the load has succeeded; today's
+   spends already known are listed whatever the status; loading and error add
+   their block below, and a screen with no spends today that is not loading
+   or failing shows the prompt. */
 export function renderTodayView(state = {}) {
   const { status, entries, listed, now } = normalise(state);
-  const parts = [totalsView(entries, now, status === 'loading' && entries.length === 0)];
+  const known = status === 'loading' ? 'pending' : status === 'error' ? 'no' : 'yes';
+  const parts = [totalsView(entries, now, known)];
   if (listed.length > 0) parts.push(listView(listed, state.newestId));
   if (status === 'loading') parts.push(loadingView(listed.length > 0));
   else if (status === 'error') parts.push(errorView(state.message));
@@ -180,11 +200,12 @@ export function renderToday(state = { status: 'loading' }) {
  * focus there, then hands the spend to save(), which writes it to the
  * on-device ledger. This submit handler is the one save path in the app, so
  * it is where the totals hook in. A save that fails takes the spend back out
- * of the list and totals, puts the text back in an empty box and says so.
- * Spends added here stay listed across Try again, above whatever the load
- * brings back, until the load returns their stored copy. isCurrent() turns
- * false once the router has replaced this screen, so a late load writes
- * nothing. Returns the first load's promise, which never rejects.
+ * of the list and totals, puts its text back in an empty box and names it in
+ * the hint. Spends added here stay listed across Try again, above whatever
+ * the load brings back, until the load returns their stored copy.
+ * isCurrent() turns false once the router has replaced this screen, so a
+ * late load writes nothing. Returns the first load's promise, which never
+ * rejects.
  */
 export function mountToday({
   main,
@@ -228,12 +249,19 @@ export function mountToday({
     if (announcer) announcer.textContent = text;
   };
 
-  /* Drops each added spend the load has already brought back from the
-     ledger, so no spend is listed or counted twice. True if any went. */
+  /* True when the load has brought back the stored copy of an added spend:
+     by the ledger id once its save has resolved, or while the save is still
+     in flight by its time, amount and note, which the save writes as is. So
+     a load that reads the committed record before the save's callback runs
+     still never counts the spend twice. */
+  const storedCopy = (entry) => loaded.some((item) => (entry.ledgerId !== undefined
+    ? item.id === entry.ledgerId
+    : item.timestamp === entry.timestamp && item.amountPaise === entry.amountPaise && item.note === entry.note));
+
+  /* Drops each added spend the load already lists. True if any went. */
   const settle = () => {
-    const stored = new Set(loaded.map((entry) => entry.id));
     const before = added.length;
-    added = added.filter((entry) => entry.ledgerId === undefined || !stored.has(entry.ledgerId));
+    added = added.filter((entry) => !storedCopy(entry));
     return added.length !== before;
   };
 
@@ -250,13 +278,16 @@ export function mountToday({
         if (settle()) show();
       },
       () => {
+        if (!added.includes(entry)) return;
         added = added.filter((item) => item !== entry);
         if (newestId === entry.id) newestId = null;
         show();
         if (!isCurrent()) return;
-        if (input.value === '') input.value = text;
-        setHint(SAVE_FAILED_HINT, true);
-        announce(SAVE_FAILED_HINT);
+        const restored = input.value === '';
+        if (restored) input.value = text;
+        const message = saveFailedHint(entry, restored);
+        setHint(message, true);
+        announce(message);
       },
     );
   }
