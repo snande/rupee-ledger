@@ -25,6 +25,11 @@ function loadWorker({ caches: existing = {}, offline = false } = {}) {
   const stores = new Map(Object.entries(existing).map(([name, entries]) => [name, new Map(entries)]));
   const state = { skipWaiting: 0, claim: 0 };
   const absolute = (input) => new URL(typeof input === 'string' ? input : input.url, `${SCOPE}sw.js`).href;
+  const withoutSearch = (url) => {
+    const parsed = new URL(url);
+    parsed.search = '';
+    return parsed.href;
+  };
 
   const fetch = async (input) => {
     const url = absolute(input);
@@ -52,10 +57,12 @@ function loadWorker({ caches: existing = {}, offline = false } = {}) {
     async delete(name) {
       return stores.delete(name);
     },
-    async match(request) {
+    async match(request, { ignoreSearch = false } = {}) {
+      const key = ignoreSearch ? withoutSearch(absolute(request)) : absolute(request);
       for (const store of stores.values()) {
-        const hit = store.get(absolute(request));
-        if (hit) return hit;
+        for (const [url, hit] of store) {
+          if ((ignoreSearch ? withoutSearch(url) : url) === key) return hit;
+        }
       }
       return undefined;
     },
@@ -124,11 +131,13 @@ function filesUnder(dir, keep) {
     .sort();
 }
 
+const exists = (path) => existsSync(new URL(`./${path}`, ROOT));
+
 function requiredAssets() {
   const code = (path) => path.endsWith('.js') && !path.endsWith('.test.js');
   return [
     'index.html',
-    ...(existsSync(new URL('./manifest.webmanifest', ROOT)) ? ['manifest.webmanifest'] : []),
+    'manifest.webmanifest',
     ...filesUnder('css', (path) => path.endsWith('.css')),
     ...filesUnder('js', code),
     ...filesUnder('src', code),
@@ -145,24 +154,32 @@ test('the cache name carries the version constant', () => {
   assert.match(SOURCE, /const VERSION = /);
 });
 
+test('the manifest and icons exist, so they can be precached', () => {
+  assert.ok(exists('manifest.webmanifest'), 'manifest.webmanifest is missing; the installed app needs it offline');
+  assert.ok(filesUnder('icons', () => true).length > 0, 'icons/ holds no files; the installed app needs them offline');
+});
+
 test('ASSETS lists every static file the app needs, each one relative', () => {
   const { ASSETS } = loadWorker();
   for (const asset of ASSETS) {
     assert.ok(asset.startsWith('./'), `${asset} is not relative to the worker`);
   }
   assert.ok(ASSETS.includes('./'), 'the start URL ./ is not precached');
-  assert.deepEqual([...new Set(listed(ASSETS))].sort(), requiredAssets().sort());
+  const names = listed(ASSETS);
+  assert.ok(names.includes('manifest.webmanifest'), 'manifest.webmanifest is not precached');
+  assert.ok(names.some((name) => name.startsWith('icons/')), 'no icon is precached');
+  assert.deepEqual([...new Set(names)].sort(), requiredAssets().sort());
 });
 
 test('every precached file exists, so install cannot fail on a 404', () => {
   for (const path of listed(loadWorker().ASSETS)) {
-    assert.ok(existsSync(new URL(`./${path}`, ROOT)), `sw.js precaches ${path}, which does not exist`);
+    assert.ok(exists(path), `sw.js precaches ${path}, which does not exist`);
   }
 });
 
 test(`the precache list is under ${PRECACHE_LIMIT_BYTES} bytes, icons excluded`, () => {
   const total = listed(loadWorker().ASSETS)
-    .filter((path) => !path.startsWith('icons/'))
+    .filter((path) => !path.startsWith('icons/') && exists(path))
     .reduce((sum, path) => sum + statSync(new URL(`./${path}`, ROOT)).size, 0);
   assert.ok(total < PRECACHE_LIMIT_BYTES, `precache is ${total} bytes; the limit is under ${PRECACHE_LIMIT_BYTES}`);
 });
@@ -194,6 +211,16 @@ test('a cached same-origin GET is served from the cache without the network', as
   assert.deepEqual(worker.network, []);
 });
 
+test('a cached asset requested with a query string is still served offline', async () => {
+  const worker = loadWorker();
+  await worker.dispatch('install');
+  worker.setOffline(true);
+  worker.network.length = 0;
+  const { responded } = await worker.dispatch('fetch', { request: request('js/app.js?v=2') });
+  assert.equal(responded.body, `cached:${SCOPE}js/app.js`);
+  assert.deepEqual(worker.network, []);
+});
+
 test('with no network, opening the app renders the cached shell', async () => {
   const worker = loadWorker();
   await worker.dispatch('install');
@@ -205,6 +232,9 @@ test('with no network, opening the app renders the cached shell', async () => {
 
   const deep = await worker.dispatch('fetch', { request: request('index.html?from=homescreen', { mode: 'navigate' }) });
   assert.equal(deep.responded.body, `cached:${SCOPE}index.html`);
+
+  const unknown = await worker.dispatch('fetch', { request: request('some/other/page', { mode: 'navigate' }) });
+  assert.equal(unknown.responded.body, `cached:${SCOPE}index.html`);
 
   for (const asset of worker.ASSETS) {
     const { responded } = await worker.dispatch('fetch', { request: request(asset) });

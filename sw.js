@@ -9,10 +9,11 @@
  *   versioned cache name, then takes over without waiting for old tabs.
  * - activate deletes every cache that is not the current version, so a new
  *   deploy (bump VERSION) replaces stale files.
- * - fetch answers same-origin GET requests cache-first; a navigation with
- *   no exact match gets the cached index.html, since the app routes by hash.
- *   Any other request (non-GET, another origin) is left alone: it is never
- *   intercepted or cached. Nothing is cached at request time.
+ * - fetch answers same-origin GET requests cache-first, ignoring any query
+ *   string; a navigation with no match gets the cached index.html, since the
+ *   app routes by hash. Any other request (non-GET, another origin) is left
+ *   alone: it is never intercepted or cached. Nothing is cached at request
+ *   time.
  *
  * The ledger itself lives in IndexedDB, which this worker never touches.
  * Hand-written on purpose: no build step and nothing imported from a network.
@@ -28,6 +29,7 @@ const SHELL = './index.html';
 const ASSETS = [
   './',
   './index.html',
+  './manifest.webmanifest',
   './css/tokens.css',
   './css/controls.css',
   './js/app.js',
@@ -42,6 +44,10 @@ const ASSETS = [
   './src/ledger/store.js',
   './src/parse-entry.js',
   './src/totals.js',
+  './icons/apple-touch-icon.png',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
+  './icons/icon-maskable-512.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -70,7 +76,8 @@ self.addEventListener('fetch', (event) => {
 });
 
 async function fromCache(request) {
-  const cached = await caches.match(request);
+  // Precached files carry no query string, so `app.js?v=2` is still `app.js`.
+  const cached = await caches.match(request, { ignoreSearch: true });
   if (cached) return cached;
   if (request.mode === 'navigate') {
     const shell = await caches.match(SHELL);
