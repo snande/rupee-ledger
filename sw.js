@@ -18,8 +18,7 @@
  * The ledger itself lives in IndexedDB, which this worker never touches.
  * Hand-written on purpose: no build step and nothing imported from a network.
  *
- * ASSETS holds exactly the modules index.html loads (js/app.js and
- * src/quick-entry.js, following their imports),
+ * ASSETS holds exactly the modules js/app.js loads (following its imports),
  * the stylesheets, the manifest and the icons; test-only helpers stay out.
  * When one is added, removed or renamed, update ASSETS and bump VERSION;
  * sw.test.js fails if ASSETS misses a file or lists one the app does not load.

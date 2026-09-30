@@ -1,6 +1,6 @@
-// Sums ledger entries into today's and this month's spend, in integer paise,
-// and formats paise as a ₹ string. Pure: no DOM, no storage, no network, so
-// the Today screen can call it on every render.
+// Sums ledger entries into today's and this month's spend, in integer paise;
+// src/format-amount.js shows them as ₹. Pure: no DOM, no storage, no
+// network, so the Today screen can call it on every render.
 //
 // Day and month boundaries are the device's local calendar: an entry at
 // 23:59 on the last day of a month belongs to that month, wherever UTC is.
@@ -55,15 +55,4 @@ export function totals(entries, now = new Date()) {
     if (at.getDate() === day) result.today += paise;
   }
   return result;
-}
-
-/* Indian digit grouping (₹1,23,450), with paise only when there are any. */
-export function formatRupees(amountPaise) {
-  const paise = Math.max(0, Math.round(Number(amountPaise) || 0));
-  const rupees = String(Math.floor(paise / 100));
-  const fraction = paise % 100;
-  const lastThree = rupees.slice(-3);
-  const rest = rupees.slice(0, -3).replace(/\B(?=(\d{2})+(?!\d))/g, ',');
-  const whole = rest ? rest + ',' + lastThree : lastThree;
-  return '₹' + whole + (fraction ? '.' + String(fraction).padStart(2, '0') : '');
 }

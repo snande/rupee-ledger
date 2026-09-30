@@ -299,7 +299,7 @@ test('opening the app on Today through the router focuses the entry box and load
   parts['#quick-entry'].value = '120 chai';
   parts['[data-today-form]'].dispatch('submit', { preventDefault() {} });
   assert.equal(parts['#quick-entry'].value, '');
-  assert.match(parts['[data-today-view]'].innerHTML, /data-today-total>₹1,610.50</);
+  assert.match(parts['[data-today-view]'].innerHTML, /data-today-total>₹1,610.5</);
 });
 
 test('each forced state reaches its own view through the router and the stub', async () => {

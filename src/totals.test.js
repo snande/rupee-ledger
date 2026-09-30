@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { formatRupees, toPaise, totals } from './totals.js';
+import { toPaise, totals } from './totals.js';
 
 // Built with the local-time Date constructor, so every fixture means the
 // same wall-clock moment whatever time zone the tests run in.
@@ -111,22 +111,9 @@ test('now defaults to the current moment', () => {
   assert.deepEqual(totals([{ amount: 12, timestamp: Date.now() }]), { today: 1200, month: 1200 });
 });
 
-test('formatRupees uses ₹ with Indian grouping and paise only when present', () => {
-  assert.equal(formatRupees(20000), '₹200');
-  assert.equal(formatRupees(12345600), '₹1,23,456');
-  assert.equal(formatRupees(4550), '₹45.50');
-  assert.equal(formatRupees(5), '₹0.05');
-  assert.equal(formatRupees(0), '₹0');
-  assert.equal(formatRupees(100000 * 100), '₹1,00,000');
-  assert.equal(formatRupees(123456789 * 100), '₹12,34,56,789');
-});
-
 test('the module is offline, dependency-free and shows no currency but ₹', async () => {
   const source = await readFile(new URL('./totals.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /^\s*import\b/m);
   assert.doesNotMatch(source, /\b(?:require|fetch|XMLHttpRequest|WebSocket)\s*\(/);
   assert.doesNotMatch(source, /[$€£¥₩₽¢]|\bUSD\b|\bINR\b|\bRs\.?\s/);
-  for (const paise of [0, 5, 4550, 20000, 12345600]) {
-    assert.match(formatRupees(paise), /^₹[\d,]+(?:\.\d\d)?$/);
-  }
 });
