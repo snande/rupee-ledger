@@ -4,14 +4,21 @@
 Fails (exit 1) when any of these breaks:
   - index.html does not link css/tokens.css and css/controls.css
   - index.html lacks the exact viewport meta tag
+  - index.html lacks the app frame: a header, then a main, then a nav holding
+    at least one <a> or <button> with class "tab"
+  - index.html loads no <script type="module"> from a local file that exists
   - a DESIGN.md palette, typeface, type-scale or spacing value is missing
     verbatim from a custom property on :root in css/tokens.css
   - button, input, select or textarea lacks appearance: none or its own
     border, background, radius, padding and font in css/controls.css
   - any of those four controls lacks its own :focus-visible or :disabled rule
+  - css/controls.css does not give .tab its own colour, background, padding,
+    font and text-decoration, has no [aria-current="page"] active style, or
+    does not pin .tab-bar with position: sticky or fixed
   - css/controls.css uses a raw value instead of a token, or a var() that
     tokens.css does not define
-  - any file references another origin: an http(s):// URL anywhere, or a
+  - index.html, css/ or js/ references another origin: an http(s):// URL
+    anywhere, or a
     protocol-relative //host in a src, href, @import or url(...)
   - index.html plus everything under css/ is 60 KB (60,000 bytes) or more
 
@@ -90,11 +97,18 @@ def design_values(design_text):
 # ---------- index.html ----------
 
 
+FRAME_PARTS = ("header", "main", "nav")
+
+
 class ShellParser(HTMLParser):
     def __init__(self):
         super().__init__()
         self.stylesheets = []
         self.viewports = []
+        self.module_scripts = []
+        self.frame_order = []
+        self.nav_tabs = []
+        self.nav_depth = 0
 
     def handle_starttag(self, tag, attrs):
         attrs = {k.lower(): (v or "") for k, v in attrs}
@@ -102,6 +116,18 @@ class ShellParser(HTMLParser):
             self.stylesheets.append(attrs.get("href", ""))
         if tag == "meta" and attrs.get("name", "").lower() == "viewport":
             self.viewports.append(attrs.get("content", ""))
+        if tag == "script" and attrs.get("type", "").lower() == "module":
+            self.module_scripts.append(attrs.get("src", ""))
+        if tag in FRAME_PARTS:
+            self.frame_order.append(tag)
+        if tag == "nav":
+            self.nav_depth += 1
+        elif self.nav_depth and tag in ("a", "button") and "tab" in attrs.get("class", "").split():
+            self.nav_tabs.append(tag)
+
+    def handle_endtag(self, tag):
+        if tag == "nav" and self.nav_depth:
+            self.nav_depth -= 1
 
 
 def check_index(root):
@@ -118,6 +144,25 @@ def check_index(root):
             fail(f"index.html links {sheet} but the file does not exist")
     if VIEWPORT not in parser.viewports:
         fail(f'index.html lacks <meta name="viewport" content="{VIEWPORT}">')
+
+    missing = [part for part in FRAME_PARTS if part not in parser.frame_order]
+    for part in missing:
+        fail(f"index.html has no <{part}> in its app frame")
+    if not missing:
+        first = [parser.frame_order.index(part) for part in FRAME_PARTS]
+        if first != sorted(first):
+            fail("index.html frame is out of order: expected <header>, then <main>, then <nav>")
+    if not parser.nav_tabs:
+        fail('index.html has no <a> or <button> with class "tab" inside <nav>')
+
+    local_modules = [src for src in parser.module_scripts if src]
+    if not local_modules:
+        fail('index.html loads no <script type="module" src="..."> from the repository')
+    for src in local_modules:
+        if REMOTE_URL.match(src) or src.startswith("//"):
+            fail(f"index.html loads module {src} from another origin")
+        elif not (root / src.split("?")[0].split("#")[0]).is_file():
+            fail(f"index.html loads module {src} but the file does not exist")
 
 
 # ---------- css/tokens.css ----------
@@ -203,6 +248,8 @@ def check_controls(root, tokens):
         if not any(p in disabled for p in DISABLED_PROPS):
             fail(f"css/controls.css: {control} has no visible :disabled rule")
 
+    check_frame_styles(rules, merged)
+
     for selectors, declarations in rules:
         for prop, value in declarations.items():
             if RAW_VALUE.search(value):
@@ -210,6 +257,32 @@ def check_controls(root, tokens):
     for name in sorted(set(re.findall(r"var\(\s*(--[\w-]+)", strip_css_comments(css)))):
         if name not in tokens:
             fail(f"css/controls.css uses var({name}), which css/tokens.css does not define on :root")
+
+
+TAB_PARTS = {
+    "colour": lambda p: p == "color",
+    "background": REQUIRED_PARTS["background"],
+    "padding": REQUIRED_PARTS["padding"],
+    "font": REQUIRED_PARTS["font"],
+    "text-decoration": lambda p: p in ("text-decoration", "text-decoration-line"),
+}
+ACTIVE_PROPS = ("color", "background", "background-color", "font-weight", "box-shadow")
+ACTIVE_SELECTOR = re.compile(r"\[aria-current=[\"']?page[\"']?\]")
+
+
+def check_frame_styles(rules, merged):
+    tab = merged(".tab")
+    for part, matches in TAB_PARTS.items():
+        if not any(matches(p) for p in tab):
+            fail(f"css/controls.css: .tab does not define its own {part}")
+    active = {}
+    for selectors, declarations in rules:
+        if any(ACTIVE_SELECTOR.search(s) for s in selectors):
+            active.update(declarations)
+    if not any(p in ACTIVE_PROPS or p.startswith("border") for p in active):
+        fail('css/controls.css has no visible [aria-current="page"] style for the active tab')
+    if merged(".tab-bar").get("position") not in ("sticky", "fixed"):
+        fail("css/controls.css: .tab-bar is not position: sticky or fixed, so it scrolls away")
 
 
 # ---------- remote references and size ----------
@@ -229,8 +302,13 @@ def shell_files(root):
     return files
 
 
+def script_files(root):
+    js_dir = root / "js"
+    return sorted(p for p in js_dir.rglob("*.js") if p.is_file()) if js_dir.is_dir() else []
+
+
 def check_remote_refs(root):
-    for path in shell_files(root):
+    for path in shell_files(root) + script_files(root):
         text = path.read_text(encoding="utf-8", errors="replace")
         for lineno, line in enumerate(text.splitlines(), 1):
             if REMOTE_URL.search(line) or PROTOCOL_RELATIVE.search(line):

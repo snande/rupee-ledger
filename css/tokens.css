@@ -50,6 +50,22 @@
   --leading-body: 1.5;
   --opacity-disabled: 0.6;
   --opacity-opaque: 1;
+
+  /* App frame: the tab bar is one tap target tall, and the active tab gets a
+     haldi indicator as thick as the focus ring. */
+  --viewport-height: 100vh;
+  --tab-bar-height: var(--control-min-height);
+  --tab-indicator-width: var(--focus-ring-width);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --layer-frame: 1;                                             /* bars above scrolling content */
+}
+
+/* Dynamic viewport units track the mobile browser's collapsing toolbar, so
+   the tab bar is not pushed off screen. Older browsers keep 100vh above. */
+@supports (height: 100dvh) {
+  :root {
+    --viewport-height: 100dvh;
+  }
 }
 
 /* Where color-mix() is supported, derive the divider from the muted token so
