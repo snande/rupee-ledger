@@ -1,0 +1,6 @@
+# Scaffolding the never-stop swarm writes at the repo root while it works
+# on this project: the (engineer, branch) pair sentinel, the branch-only
+# deletion sentinel the host-side push reads after the sandbox exits, and
+# the round's prompt/stdout scratch. None of it belongs in this repo's
+# history.
+.never-stop-*
