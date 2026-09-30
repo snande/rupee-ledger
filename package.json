@@ -1,0 +1,10 @@
+{
+  "name": "rupee-ledger",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An offline, static-file rupee spend ledger.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test"
+  }
+}
