@@ -15,6 +15,7 @@ import {
 import { mountToday, renderToday } from './screens/today.js';
 import { mountCompare, renderCompare } from './screens/compare.js';
 import { mountMonth, renderMonth } from './screens/month.js';
+import { mountSearch, renderSearch } from './screens/search.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
 
 /* Screens under test here render without their mount, so no data loads. */
@@ -83,6 +84,32 @@ test('the Compare tab in index.html links to the compare route', async () => {
   const { readFile } = await import('node:fs/promises');
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   assert.match(html, /<a class="tab" href="#\/compare" data-route="compare">Compare<\/a>/);
+});
+
+test('the routes table maps search to the Search screen and its mount', () => {
+  assert.equal(routes.search, renderSearch);
+  assert.equal(mounts.search, mountSearch);
+  for (const hash of ['#/search', '#/search/', '#search']) {
+    assert.deepEqual(resolveRoute(hash), { name: 'search', render: renderSearch }, hash);
+  }
+});
+
+test('renderRoute puts the Search screen into main for #/search and marks its tab', () => {
+  const main = fakeElement();
+  const today = fakeElement({ 'data-route': 'today' });
+  const search = fakeElement({ 'data-route': 'search' });
+  const route = renderRoute({ main, links: [today, search], hash: '#/search', mountTable: noMounts });
+  assert.equal(route.name, 'search');
+  assert.match(main.innerHTML, /<div class="search"/);
+  assert.match(main.innerHTML, /<input type="search"[^>]*data-search-input>/);
+  assert.equal(today.getAttribute('aria-current'), null);
+  assert.equal(search.getAttribute('aria-current'), 'page');
+});
+
+test('the Search tab in index.html links to the search route', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /<a class="tab" href="#\/search" data-route="search">Search<\/a>/);
 });
 
 test('the routes table maps month to the Month screen and its mount', () => {
