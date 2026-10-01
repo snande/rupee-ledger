@@ -460,12 +460,28 @@ export function mountToday({
     showPicker();
   }
 
+  /* The height the sticky entry box and tab bar take off the bottom of the
+     screen, measured, or null when they cannot be measured. */
+  function stickyClearance() {
+    const doc = view.ownerDocument;
+    if (!doc || typeof doc.querySelector !== 'function') return null;
+    let total = 0;
+    for (const selector of ['.today-entry', '.tab-bar']) {
+      const bar = doc.querySelector(selector);
+      if (bar && typeof bar.getBoundingClientRect === 'function') total += bar.getBoundingClientRect().height;
+    }
+    return total;
+  }
+
   /* Scrolls the open picker just enough that all of it is on screen; focus
      alone only brings the current name into view. */
   function showPicker() {
     if (!isCurrent() || typeof view.querySelector !== 'function') return;
     const picker = view.querySelector('.category-picker');
-    if (picker && typeof picker.scrollIntoView === 'function') picker.scrollIntoView({ block: 'nearest' });
+    if (!picker) return;
+    const clearance = stickyClearance();
+    if (clearance !== null && picker.style) picker.style.setProperty('--sticky-bottom-clearance', clearance + 'px');
+    if (typeof picker.scrollIntoView === 'function') picker.scrollIntoView({ block: 'nearest' });
   }
 
   /* Closes the picker, if open, changing nothing. `refocus` puts focus back

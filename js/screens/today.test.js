@@ -731,13 +731,13 @@ test('the picker styles hold no quoted or raw value, only tokens', async () => {
   }
 });
 
-test('the picker sits in flow with room above the sticky bars and is never cut short, so Other shows', async () => {
+test('the picker sits in flow and is never cut short, so Other shows', async () => {
   const css = (await readFile(new URL('../../css/controls.css', import.meta.url), 'utf8'))
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const rule = (selector) => css.match(new RegExp('(?:^|})\\s*' + selector.replace('.', '\\.') + '\\s*\\{([^}]*)\\}'))[1];
   const picker = rule('.category-picker');
   assert.doesNotMatch(picker, /position:\s*absolute/, 'the picker is in flow, not floating under the bars');
-  assert.match(picker, /scroll-margin-bottom:/, 'it scrolls clear of the sticky bars');
+  assert.match(picker, /scroll-margin-bottom:\s*var\(--sticky-bottom-clearance,/, 'it scrolls clear of the sticky bars');
   assert.doesNotMatch(picker, /max-height|overflow/, 'no name is clipped or scrolled away');
 });
 
@@ -745,8 +745,14 @@ test('opening the picker lists Other last and scrolls the whole picker into view
   const screen = fakeScreen();
   const scrolled = [];
   const find = screen.view.querySelector;
+  const props = {};
+  const bars = { '.today-entry': 120, '.tab-bar': 49 };
+  screen.view.ownerDocument = {
+    querySelector: (selector) => ({ getBoundingClientRect: () => ({ height: bars[selector] }) }),
+  };
   screen.view.querySelector = (selector) => ({
     ...find(selector),
+    style: { setProperty: (name, value) => { props[name] = value; scrolled.push(['clearance', value]); } },
     scrollIntoView: (options) => scrolled.push([selector, options]),
   });
   const { ledger, load } = memoryLedger([chai()]);
@@ -755,7 +761,8 @@ test('opening the picker lists Other last and scrolls the whole picker into view
   const names = pickerOptions(screen.view.innerHTML).map(([name]) => name);
   assert.deepEqual(names, CATEGORIES);
   assert.equal(names.at(-1), 'Other');
-  assert.deepEqual(scrolled, [['.category-picker', { block: 'nearest' }]]);
+  assert.deepEqual(props, { '--sticky-bottom-clearance': '169px' }, 'clearance is the measured entry box plus tab bar');
+  assert.deepEqual(scrolled, [['clearance', '169px'], ['.category-picker', { block: 'nearest' }]], 'clearance is set before scrolling');
   assert.equal(screen.view.focused, '.category-option-current', 'focus stays on the current name');
 });
 
