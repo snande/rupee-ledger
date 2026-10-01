@@ -20,6 +20,7 @@
  * currency sign anywhere in this file is ₹.
  */
 
+import { exportBackup } from '../../src/backup-download.js';
 import { CATEGORIES } from '../../src/categorise.js';
 import { formatPaise } from '../../src/format-amount.js';
 import { parseEntry } from '../../src/parse-entry.js';
@@ -32,6 +33,8 @@ export { CATEGORIES, categoryOf, formatPaise, INVALID_HINT };
 export const STATUSES = ['empty', 'loading', 'error', 'filled'];
 export const ERROR_MESSAGE = 'Today’s spends did not open.';
 export const ENTRY_HINT = 'Amount first, then what it was for';
+export const EXPORT_LABEL = 'Export backup';
+export const EXPORT_ERROR = 'The backup was not made: your spends could not be read. Nothing was downloaded.';
 
 const SKELETON_ROWS = 3;
 
@@ -214,12 +217,23 @@ export function renderTodayView(state = {}) {
   return parts.join('');
 }
 
+/* The Export backup control: a quiet secondary button below the spends,
+   outside the view that re-renders and apart from the entry box, and the
+   line that says when a backup could not be made. */
+export function backupView() {
+  return '<section class="today-backup" aria-label="Backup">' +
+    '<button type="button" class="button-secondary today-export" data-export-backup>' + EXPORT_LABEL + '</button>' +
+    '<p class="hint hint-error today-export-status" role="alert" data-export-status hidden></p>' +
+  '</section>';
+}
+
 /* The router calls this with no state, so the screen opens on the skeleton;
    mountToday starts the load in the same task and replaces it once the
    promise settles. */
 export function renderToday(state = { status: 'loading' }) {
   return '<div class="today" data-status="' + shownStatus(state) + '">' +
     '<div class="today-view" data-today-view>' + renderTodayView(state) + '</div>' +
+    backupView() +
     '<form class="today-entry" data-today-form novalidate>' +
       '<label for="quick-entry">Add a spend</label>' +
       '<div class="today-entry-row">' +
@@ -254,6 +268,10 @@ export function renderToday(state = { status: 'loading' }) {
  * Escape, or a tap outside the picker, closes it and changes nothing. The
  * picker also goes, with its document listeners, once its spend is no
  * longer listed or the router has replaced the screen.
+ * Export backup hands every stored entry to `backup`, by default
+ * exportBackup() in src/backup-download.js, which downloads the dated JSON
+ * file on the phone with no network; a read that fails downloads nothing
+ * and shows EXPORT_ERROR under the button.
  * `ledger` defaults to src/ledger.js, or on a demo visit to one that stores
  * nothing. isCurrent() turns false once the router has replaced this screen,
  * so a late load writes nothing. Returns the first load's promise, which
@@ -265,6 +283,7 @@ export function mountToday({
   isCurrent = () => true,
   load = loadEntries,
   ledger = ledgerFor(query),
+  backup = exportBackup,
 }) {
   const root = main.querySelector('.today');
   const view = main.querySelector('[data-today-view]');
@@ -272,6 +291,8 @@ export function mountToday({
   const input = main.querySelector('#quick-entry');
   const hint = main.querySelector('#quick-entry-hint');
   const announcer = main.querySelector('[data-entry-status]');
+  const exportButton = main.querySelector('[data-export-backup]');
+  const exportStatus = main.querySelector('[data-export-status]');
   if (!view || !form || !input || !hint) {
     throw new Error('The Today screen markup is incomplete.');
   }
@@ -577,6 +598,36 @@ export function mountToday({
     if (event.key === 'Escape') closePicker(true);
     else handled = moveFocus(event);
     if (handled && typeof event.preventDefault === 'function') event.preventDefault();
+  });
+
+  /* Export backup: one download per tap, the button off while it runs. */
+  function showExportError(text) {
+    if (!exportStatus) return;
+    exportStatus.textContent = text;
+    if (text) exportStatus.removeAttribute('hidden');
+    else exportStatus.setAttribute('hidden', '');
+  }
+  let exporting = false;
+  exportButton?.addEventListener('click', () => {
+    if (exporting) return;
+    exporting = true;
+    exportButton.disabled = true;
+    showExportError('');
+    let running;
+    try {
+      running = Promise.resolve(backup());
+    } catch (error) {
+      running = Promise.reject(error);
+    }
+    return running.then(
+      () => {},
+      () => {
+        if (isCurrent()) showExportError(EXPORT_ERROR);
+      },
+    ).finally(() => {
+      exporting = false;
+      exportButton.disabled = false;
+    });
   });
 
   input.focus();
