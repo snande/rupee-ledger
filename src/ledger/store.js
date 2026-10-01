@@ -6,7 +6,9 @@
 // has committed. Resolving on the `add` request's `onsuccess` would let a
 // tab kill between the request and the commit lose an entry the screen had
 // already shown as saved. Each call writes straight away in its own
-// transaction; nothing is buffered, debounced or batched.
+// transaction; nothing is buffered, debounced or batched. The one batch
+// write is `addMissingEntries`, for a backup import: all of it commits in a
+// single transaction or none of it does.
 //
 // Amounts are stored as integer paise (₹120 is 12000) so totals never
 // drift the way sums of fractional rupees do.
@@ -71,7 +73,7 @@ export async function closeLedger() {
  */
 export async function addEntry({ amount, note, category, createdAt } = {}) {
   const record = {
-    amount: toPaise(amount),
+    amount: rupeesToPaise(amount),
     note: String(note ?? ''),
     // Free-form for now; auto-categorisation is a later deliverable.
     category: String(category ?? ''),
@@ -122,6 +124,37 @@ export async function updateCategory(id, category) {
       updated ? resolve(updated) : reject(new Error(`No ledger entry has id ${String(id)}.`));
     tx.onerror = tx.onabort = () =>
       reject(tx.error ?? request.error ?? new Error('The ledger write was aborted.'));
+  });
+}
+
+/**
+ * Adds a batch of records in one readwrite transaction and resolves with how
+ * many were added once it has committed. Inside that transaction it reads
+ * every stored record and calls `select(stored)`, which returns the records
+ * to add. It only ever adds: no stored record is deleted or overwritten. If
+ * the transaction fails, none of the batch is added.
+ * @param {(stored: object[]) => object[]} select  must be synchronous; the
+ *   returned records are written as given, each getting a fresh `id`.
+ * @returns {Promise<number>}
+ */
+export async function addMissingEntries(select) {
+  const db = await openLedger();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite', { durability: 'strict' });
+    const store = tx.objectStore(STORE);
+    const request = store.index(CREATED_AT).getAll();
+    let added = 0;
+    request.onsuccess = () => {
+      for (const record of select(request.result)) {
+        const { id, ...fresh } = record;
+        store.add(fresh);
+        added += 1;
+      }
+    };
+    tx.oncomplete = () => resolve(added);
+    tx.onerror = tx.onabort = () =>
+      reject(tx.error ?? request.error ?? new Error('The ledger write was aborted; nothing was added.'));
   });
 }
 
@@ -187,15 +220,22 @@ function openDatabase() {
   });
 }
 
-// Rupees to integer paise. Rounding absorbs float noise (0.29 * 100 is
-// 28.999999999999996); anything that is not a positive, finite amount of at
-// least one paisa is refused rather than stored.
-function toPaise(amount) {
+/**
+ * Rupees to integer paise, the one conversion every writer uses. Rounding
+ * absorbs float noise (0.29 * 100 is 28.999999999999996) but not a real
+ * fraction of a paisa such as ₹120.005, which is refused rather than
+ * silently changed; so is anything that is not a positive, finite amount of
+ * at least one paisa.
+ * @param {number} amount  rupees, e.g. 45.5.
+ * @returns {number}  integer paise, e.g. 4550.
+ * @throws {Error} when `amount` cannot be stored exactly as whole paise.
+ */
+export function rupeesToPaise(amount) {
   if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
     throw new Error(`Amount must be a positive, finite number of rupees; got ${String(amount)}.`);
   }
   const paise = Math.round(amount * 100);
-  if (paise < 1 || !Number.isSafeInteger(paise)) {
+  if (paise < 1 || !Number.isSafeInteger(paise) || Math.abs(amount * 100 - paise) > 1e-6) {
     throw new Error(`Amount ${amount} cannot be stored as a whole number of paise.`);
   }
   return paise;
