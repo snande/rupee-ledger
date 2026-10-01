@@ -599,3 +599,10 @@ test('a save that fails while the next line is typed keeps that line and names t
   assert.equal(today(screen.view.innerHTML), '₹0');
   assert.equal(saveFailedHint({ amountPaise: 4550, note: '' }, true), '₹45.5 was not saved. Press Enter to try again.');
 });
+
+test('the Today screen links to the Month screen in every state', () => {
+  for (const status of ['empty', 'loading', 'error', 'filled']) {
+    const html = renderToday({ status, entries: sample });
+    assert.match(html, /<a class="today-month-link" href="#\/month">/, status);
+  }
+});

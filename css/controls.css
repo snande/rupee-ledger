@@ -423,6 +423,173 @@ label {
   }
 }
 
+/* The way from the totals to the Month screen: a full-width, 48px tall
+   link in haldi-ruled ink, so it reads as a tap target, not body text. */
+.today-month-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: var(--control-min-height);
+  margin-bottom: var(--space-4);
+  padding: 0 var(--space-4);
+  border: var(--border-hairline) solid var(--color-divider);
+  border-radius: var(--radius-control);
+  background: var(--color-card);
+  color: var(--color-ink);
+  font-size: var(--text-2);
+  font-weight: var(--weight-strong);
+  text-decoration: none;
+}
+
+.today-month-link:focus-visible {
+  outline: var(--focus-ring-width) solid var(--color-haldi);
+  outline-offset: var(--focus-ring-width);
+}
+
+/* ---------- Month screen ---------- */
+
+/* The month's name, its total card, then the pie over its legend. */
+.month {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.month-view {
+  min-width: 0;
+}
+
+.month-heading {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-4);
+}
+
+.month-total {
+  border-bottom: var(--focus-ring-width) solid var(--color-haldi);
+}
+
+.month-chart {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-5);
+}
+
+/* Hand-drawn SVG; a hairline of card white parts the slices. */
+.month-pie {
+  display: block;
+  width: var(--pie-size);
+  max-width: 100%;
+  height: auto;
+}
+
+.month-slice {
+  stroke: var(--color-card);
+  stroke-width: var(--border-hairline);
+}
+
+.month-slice-1 {
+  fill: var(--color-chart-1);
+  background: var(--color-chart-1);
+}
+
+.month-slice-2 {
+  fill: var(--color-chart-2);
+  background: var(--color-chart-2);
+}
+
+.month-slice-3 {
+  fill: var(--color-chart-3);
+  background: var(--color-chart-3);
+}
+
+.month-slice-4 {
+  fill: var(--color-chart-4);
+  background: var(--color-chart-4);
+}
+
+.month-slice-5 {
+  fill: var(--color-chart-5);
+  background: var(--color-chart-5);
+}
+
+.month-slice-6 {
+  fill: var(--color-chart-6);
+  background: var(--color-chart-6);
+}
+
+.month-slice-7 {
+  fill: var(--color-chart-7);
+  background: var(--color-chart-7);
+}
+
+/* Swatch, name and amount per row; the name wraps, the amount never does. */
+.month-legend {
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.month-legend-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-height: var(--control-min-height);
+  border-bottom: var(--border-hairline) solid var(--color-divider);
+}
+
+.month-legend-row:last-child {
+  border-bottom: 0;
+}
+
+.month-swatch {
+  flex: none;
+  width: var(--space-3);
+  height: var(--space-3);
+  border-radius: var(--radius-round);
+}
+
+.month-legend-name {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--text-3);
+}
+
+.month-legend-amount {
+  flex: none;
+  font-size: var(--text-3);
+  white-space: nowrap;
+}
+
+.month-link {
+  color: var(--color-ink);
+  font-weight: var(--weight-strong);
+}
+
+.month-skeleton {
+  display: block;
+  width: var(--pie-size);
+  max-width: 100%;
+  height: var(--pie-size);
+  margin: 0 auto;
+  border-radius: var(--radius-round);
+}
+
+.month-error {
+  border-color: var(--color-sindoor);
+}
+
+.month-error-message {
+  margin-bottom: var(--space-2);
+  color: var(--color-sindoor);
+  font-weight: var(--weight-strong);
+}
+
+.month-error .hint {
+  margin-bottom: var(--space-4);
+}
+
 /* ---------- Tab bar ---------- */
 
 /* Sticky to the bottom of the viewport, so it stays in reach while the

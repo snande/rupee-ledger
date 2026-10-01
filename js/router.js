@@ -6,14 +6,16 @@
  */
 
 import { renderToday, mountToday } from './screens/today.js';
+import { renderMonth, mountMonth } from './screens/month.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
 
 export const DEFAULT_ROUTE = 'today';
 
-/* Route name → function returning the screen's markup. Later tabs (monthly
-   view, search, settings) add an entry here and a tab in index.html. */
+/* Route name → function returning the screen's markup. Later tabs (search,
+   settings) add an entry here and a tab in index.html. */
 export const routes = {
   today: renderToday,
+  month: renderMonth,
 };
 
 /* Route name → function run once the screen's markup is in <main>, for
@@ -23,6 +25,7 @@ export const routes = {
    overwrite a newer screen. A mount that runs owns focus for its screen. */
 export const mounts = {
   today: mountToday,
+  month: mountMonth,
 };
 
 /* A hash may carry a query after the path, as in '#/today?state=empty'. */

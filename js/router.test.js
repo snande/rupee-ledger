@@ -13,6 +13,7 @@ import {
   startRouter,
 } from './router.js';
 import { mountToday, renderToday } from './screens/today.js';
+import { mountMonth, renderMonth } from './screens/month.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
 
 /* Screens under test here render without their mount, so no data loads. */
@@ -55,6 +56,19 @@ test('the routes table maps today to the Today screen', () => {
   assert.equal(DEFAULT_ROUTE, 'today');
   assert.equal(routes.today, renderToday);
   assert.equal(mounts.today, mountToday);
+});
+
+test('#/month is the Month screen, not Not found', () => {
+  assert.equal(routes.month, renderMonth);
+  assert.equal(mounts.month, mountMonth);
+  for (const hash of ['#/month', '#/month/', '#/month?state=filled']) {
+    assert.deepEqual(resolveRoute(hash), { name: 'month', render: renderMonth }, hash);
+  }
+  const main = fakeElement();
+  const route = renderRoute({ main, hash: '#/month', mountTable: noMounts });
+  assert.equal(route.name, 'month');
+  assert.equal(main.innerHTML, renderMonth());
+  assert.doesNotMatch(main.innerHTML, /not-found/);
 });
 
 test('a query after the path keeps the route and is parsed apart', () => {

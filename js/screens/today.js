@@ -115,6 +115,11 @@ export function totalsView(entries, now = new Date(), known = 'yes') {
   '</section>';
 }
 
+/* Under the totals, the way to this month's split by category. */
+function monthLink() {
+  return '<a class="today-month-link" href="#/month">This month by category <span aria-hidden="true">→</span></a>';
+}
+
 function listView(entries, newestId) {
   const count = entries.length === 1 ? '1 spend' : entries.length + ' spends';
   return '<section class="card today-list" aria-labelledby="today-list-label">' +
@@ -158,14 +163,15 @@ function errorView(message) {
 }
 
 /* The part of the screen that follows the state. The total cards come
-   first in every state, with sums only once the load has succeeded; today's
+   first in every state, with sums only once the load has succeeded, then
+   the link to the Month screen; today's
    spends already known are listed whatever the status; loading and error add
    their block below, and a screen with no spends today that is not loading
    or failing shows the prompt. */
 export function renderTodayView(state = {}) {
   const { status, entries, listed, now } = normalise(state);
   const known = status === 'loading' ? 'pending' : status === 'error' ? 'no' : 'yes';
-  const parts = [totalsView(entries, now, known)];
+  const parts = [totalsView(entries, now, known), monthLink()];
   if (listed.length > 0) parts.push(listView(listed, state.newestId));
   if (status === 'loading') parts.push(loadingView(listed.length > 0));
   else if (status === 'error') parts.push(errorView(state.message));

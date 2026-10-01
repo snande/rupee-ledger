@@ -68,6 +68,17 @@
   /* Skeleton bars, sized from the scales above. */
   --skeleton-line: var(--space-3);
   --skeleton-total: var(--space-6);
+
+  /* Month pie: slice colours in legend order, the brand accents first, then
+     quiet earth tones that read on card white; the last is the muted grey. */
+  --color-chart-1: var(--color-haldi);
+  --color-chart-2: #2E7D74;   /* neem teal */
+  --color-chart-3: var(--color-sindoor);
+  --color-chart-4: #4A5FA8;   /* indigo */
+  --color-chart-5: #6E8B3D;   /* leaf green */
+  --color-chart-6: #8A4F7D;   /* jamun plum */
+  --color-chart-7: var(--color-muted);
+  --pie-size: calc(var(--space-7) * 4);                         /* 192px */
 }
 
 /* Dynamic viewport units track the mobile browser's collapsing toolbar, so
