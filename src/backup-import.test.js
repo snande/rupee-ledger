@@ -61,6 +61,15 @@ test('parseBackup throws an Error naming the problem, and never partially return
   }
 });
 
+test('rupeesToPaise is the one conversion: the import and addEntry both refuse a fraction of a paisa', async () => {
+  assert.equal(store.rupeesToPaise(0.29), 29);
+  assert.equal(store.rupeesToPaise(1999.99), 199999);
+  assert.throws(() => store.rupeesToPaise(120.005), /cannot be stored as a whole number of paise/);
+
+  await assert.rejects(store.addEntry({ amount: 120.005, note: 'chai', createdAt: 1 }), /whole number of paise/);
+  assert.deepEqual(await store.listEntries(), []);
+});
+
 test('importing N entries into an empty store leaves exactly N entries and matching totals', async () => {
   const { entries } = parseBackup(backupText());
 
@@ -188,6 +197,8 @@ test('previewImport counts what an import would add and skip without writing', a
 });
 
 test('previewImport rejects when the ledger cannot be read', async () => {
+  // The fake's `failNext` only fails readwrite transactions and the preview
+  // only reads, so the read fails by having no IndexedDB at all.
   globalThis.indexedDB = undefined;
 
   await assert.rejects(previewImport(store, parseBackup(backupText()).entries), /IndexedDB is not available/);

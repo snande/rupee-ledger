@@ -9,9 +9,10 @@
 //    "entries":[{"id":"…","amount":120,"text":"chai","category":"Food",
 //                "createdAt":"<ISO>"}]}
 //
-// `amount` is in rupees (₹120 is 120); it is stored as integer paise, the
-// unit the ledger already uses, with no currency conversion. An amount that
-// is not a whole number of paise is refused rather than rounded.
+// `amount` is in rupees (₹120 is 120); it is stored as integer paise through
+// `rupeesToPaise`, the same conversion `addEntry` uses, with no currency
+// conversion. An amount that is not a whole number of paise is refused
+// rather than rounded.
 //
 // Merging never deletes or overwrites: entries are added through
 // `addMissingEntries`, in one readwrite transaction, so a failed import
@@ -25,6 +26,7 @@
 
 import { categorise } from './categorise.js';
 import { SCHEMA_VERSION } from './ledger.js';
+import { rupeesToPaise } from './ledger/store.js';
 
 export const BACKUP_FORMAT = 'rupee-ledger-backup';
 export const BACKUP_FORMAT_VERSION = 1;
@@ -148,10 +150,10 @@ function toRecord(entry, index) {
   if (amount < 0) {
     throw new Error(`${where} has a negative amount: ₹${amount}.`);
   }
-  // The tolerance absorbs float noise (0.29 * 100 is 28.999999999999996)
-  // but not a real fraction of a paisa such as ₹120.005.
-  const amountPaise = Math.round(amount * 100);
-  if (amountPaise < 1 || !Number.isSafeInteger(amountPaise) || Math.abs(amount * 100 - amountPaise) > 1e-6) {
+  let amountPaise;
+  try {
+    amountPaise = rupeesToPaise(amount);
+  } catch {
     throw new Error(`${where} has an amount of ₹${amount}, which is not a positive whole number of paise.`);
   }
   if (text !== undefined && typeof text !== 'string') {

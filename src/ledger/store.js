@@ -73,7 +73,7 @@ export async function closeLedger() {
  */
 export async function addEntry({ amount, note, category, createdAt } = {}) {
   const record = {
-    amount: toPaise(amount),
+    amount: rupeesToPaise(amount),
     note: String(note ?? ''),
     // Free-form for now; auto-categorisation is a later deliverable.
     category: String(category ?? ''),
@@ -220,15 +220,22 @@ function openDatabase() {
   });
 }
 
-// Rupees to integer paise. Rounding absorbs float noise (0.29 * 100 is
-// 28.999999999999996); anything that is not a positive, finite amount of at
-// least one paisa is refused rather than stored.
-function toPaise(amount) {
+/**
+ * Rupees to integer paise, the one conversion every writer uses. Rounding
+ * absorbs float noise (0.29 * 100 is 28.999999999999996) but not a real
+ * fraction of a paisa such as ₹120.005, which is refused rather than
+ * silently changed; so is anything that is not a positive, finite amount of
+ * at least one paisa.
+ * @param {number} amount  rupees, e.g. 45.5.
+ * @returns {number}  integer paise, e.g. 4550.
+ * @throws {Error} when `amount` cannot be stored exactly as whole paise.
+ */
+export function rupeesToPaise(amount) {
   if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) {
     throw new Error(`Amount must be a positive, finite number of rupees; got ${String(amount)}.`);
   }
   const paise = Math.round(amount * 100);
-  if (paise < 1 || !Number.isSafeInteger(paise)) {
+  if (paise < 1 || !Number.isSafeInteger(paise) || Math.abs(amount * 100 - paise) > 1e-6) {
     throw new Error(`Amount ${amount} cannot be stored as a whole number of paise.`);
   }
   return paise;
