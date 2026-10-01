@@ -531,6 +531,16 @@ label {
   display: none;
 }
 
+/* Import / Cancel under the preview line; .button-row lays them out, and
+   [hidden] keeps them away until a preview is waiting. */
+.backup-confirm {
+  margin-top: var(--space-3);
+}
+
+.backup-confirm[hidden] {
+  display: none;
+}
+
 .today-entry-row button {
   flex: none;
   min-width: var(--control-min-height);

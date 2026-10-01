@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import vm from 'node:vm';
 
@@ -22,6 +23,7 @@ const PRECACHE_LIMIT_BYTES = 200_000;
 function loadWorker({ caches: existing = {}, offline = false } = {}) {
   const handlers = {};
   const network = [];
+  const cacheModes = [];
   const stores = new Map(Object.entries(existing).map(([name, entries]) => [name, new Map(entries)]));
   const state = { skipWaiting: 0, claim: 0 };
   const absolute = (input) => new URL(typeof input === 'string' ? input : input.url, `${SCOPE}sw.js`).href;
@@ -34,6 +36,7 @@ function loadWorker({ caches: existing = {}, offline = false } = {}) {
   const fetch = async (input) => {
     const url = absolute(input);
     network.push(url);
+    cacheModes.push(typeof input === 'string' ? 'default' : input.cache ?? 'default');
     if (offline) throw new TypeError('Failed to fetch');
     return { body: `network:${url}`, ok: true };
   };
@@ -84,15 +87,24 @@ function loadWorker({ caches: existing = {}, offline = false } = {}) {
   };
   self.caches = caches;
 
-  const context = vm.createContext({ self, caches, fetch, URL, Promise });
+  // Enough of Request for the precache: an absolute url and a cache mode.
+  class Request {
+    constructor(input, init = {}) {
+      this.url = absolute(input);
+      this.cache = init.cache ?? 'default';
+    }
+  }
+
+  const context = vm.createContext({ self, caches, fetch, Request, URL, Promise });
   vm.runInContext(SOURCE, context, { filename: 'sw.js' });
   // Copied out through JSON so the arrays belong to this realm, not the context's.
-  const constants = JSON.parse(vm.runInContext('JSON.stringify({ VERSION, CACHE, ASSETS })', context));
+  const constants = JSON.parse(vm.runInContext('JSON.stringify({ VERSION, ASSETS_DIGEST, CACHE, ASSETS })', context));
 
   return {
     ...constants,
     handlers,
     network,
+    cacheModes,
     state,
     stores,
     setOffline: (value) => {
@@ -176,6 +188,41 @@ test('the cache name carries the version constant', () => {
   assert.match(worker.VERSION, /\S/);
   assert.ok(worker.CACHE.includes(worker.VERSION), `${worker.CACHE} does not include ${worker.VERSION}`);
   assert.match(SOURCE, /const VERSION = /);
+});
+
+/*
+ * sha-256 over every precached file, in ASSETS order: its path, then its
+ * bytes. Text files are read with CRLF as LF, so a Windows checkout gets the
+ * same digest.
+ */
+function assetsDigest(assets) {
+  const hash = createHash('sha256');
+  for (const path of listed(assets)) {
+    let bytes = readFileSync(new URL(`./${path}`, ROOT));
+    if (!path.startsWith('icons/')) bytes = Buffer.from(bytes.toString('utf8').replace(/\r\n/g, '\n'), 'utf8');
+    hash.update(`${path}\0`);
+    hash.update(bytes);
+    hash.update('\0');
+  }
+  return hash.digest('hex');
+}
+
+test('a changed precached file comes with a new VERSION, so installed phones get it', () => {
+  const { ASSETS, ASSETS_DIGEST, VERSION } = loadWorker();
+  const digest = assetsDigest(ASSETS);
+  assert.equal(
+    ASSETS_DIGEST,
+    digest,
+    `A precached file changed but sw.js still pins the old contents for ${VERSION}. Installed phones answer ` +
+      `cache-first, so they would keep the old file. Bump VERSION in sw.js and set ASSETS_DIGEST = '${digest}'.`,
+  );
+});
+
+test('install fetches every asset past the HTTP cache, so no stale copy is precached', async () => {
+  const worker = loadWorker();
+  await worker.dispatch('install');
+  assert.equal(worker.cacheModes.length, worker.ASSETS.length);
+  assert.deepEqual(new Set(worker.cacheModes), new Set(['reload']));
 });
 
 test('the manifest and icons exist, so they can be precached', () => {

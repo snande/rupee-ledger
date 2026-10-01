@@ -7,6 +7,8 @@
  *
  * - install precaches every static file the app needs (ASSETS) under a
  *   versioned cache name, then takes over without waiting for old tabs.
+ *   Each file is fetched with cache: 'reload', past the browser's HTTP
+ *   cache, so a new version never precaches a stale copy of an old file.
  * - activate deletes every cache that is not the current version, so a new
  *   deploy (bump VERSION) replaces stale files.
  * - fetch answers same-origin GET requests cache-first, ignoring any query
@@ -22,9 +24,19 @@
  * the stylesheets, the manifest and the icons; test-only helpers stay out.
  * When one is added, removed or renamed, update ASSETS and bump VERSION;
  * sw.test.js fails if ASSETS misses a file or lists one the app does not load.
+ *
+ * Because fetches are answered cache-first, an installed phone keeps running
+ * the files of the cache it has until sw.js itself changes. So a change to
+ * ANY file in ASSETS must bump VERSION too, or phones keep the old code (a
+ * fix to src/backup-import.js once shipped without a bump and never reached
+ * them). ASSETS_DIGEST pins the contents VERSION was set for: sw.test.js
+ * recomputes it and fails, printing the new value, when a precached file
+ * changes without it. Bump VERSION and paste the new digest together.
  */
 
-const VERSION = 'v10';
+const VERSION = 'v11';
+// sha-256 of the precached files' contents; see the note above and sw.test.js.
+const ASSETS_DIGEST = 'c94b2b35513e76a75c401a61bec1127358bc44cbb3065846d716a46a63947806';
 const CACHE = 'rupee-ledger-' + VERSION;
 const SHELL = './index.html';
 
@@ -67,7 +79,7 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(ASSETS))
+      .then((cache) => cache.addAll(ASSETS.map((asset) => new Request(asset, { cache: 'reload' }))))
       .then(() => self.skipWaiting()),
   );
 });
