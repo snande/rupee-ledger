@@ -24,7 +24,7 @@
  * sw.test.js fails if ASSETS misses a file or lists one the app does not load.
  */
 
-const VERSION = 'v9';
+const VERSION = 'v10';
 const CACHE = 'rupee-ledger-' + VERSION;
 const SHELL = './index.html';
 
@@ -38,6 +38,7 @@ const ASSETS = [
   './js/router.js',
   './js/sw-register.js',
   './js/data/ledger.js',
+  './js/screens/backup.js',
   './js/screens/compare.js',
   './js/screens/month.js',
   './js/screens/not-found.js',
@@ -45,6 +46,7 @@ const ASSETS = [
   './js/screens/today.js',
   './src/backup-download.js',
   './src/backup-export.js',
+  './src/backup-import.js',
   './src/categorise.js',
   './src/category-totals.js',
   './src/compare-months.js',
