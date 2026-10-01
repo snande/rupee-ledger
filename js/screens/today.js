@@ -245,7 +245,8 @@ export function renderToday(state = { status: 'loading' }) {
  * puts its text back in an empty box and names it in the hint. Spends added
  * here stay listed across Try again, above whatever the load brings back,
  * until the load returns their stored copy.
- * Each spend's category chip opens a picker of every name in CATEGORIES. One
+ * Each spend's category chip opens a picker of every name in CATEGORIES,
+ * scrolled fully into view so its last name, Other, is never off screen. One
  * tap on another name sets it on screen at once, closes the picker and
  * writes it with the ledger's updateCategory() without waiting; a write that
  * fails puts the old category back and says so. A spend whose own save is
@@ -456,6 +457,15 @@ export function mountToday({
     if (picking === null) return;
     listen(true);
     focusIn('.category-option-current');
+    showPicker();
+  }
+
+  /* Scrolls the open picker just enough that all of it is on screen; focus
+     alone only brings the current name into view. */
+  function showPicker() {
+    if (!isCurrent() || typeof view.querySelector !== 'function') return;
+    const picker = view.querySelector('.category-picker');
+    if (picker && typeof picker.scrollIntoView === 'function') picker.scrollIntoView({ block: 'nearest' });
   }
 
   /* Closes the picker, if open, changing nothing. `refocus` puts focus back

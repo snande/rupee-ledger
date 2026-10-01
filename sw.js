@@ -24,7 +24,7 @@
  * sw.test.js fails if ASSETS misses a file or lists one the app does not load.
  */
 
-const VERSION = 'v6';
+const VERSION = 'v7';
 const CACHE = 'rupee-ledger-' + VERSION;
 const SHELL = './index.html';
 
