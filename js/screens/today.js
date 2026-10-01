@@ -462,7 +462,7 @@ export function mountToday({
 
   /* The height the sticky entry box and tab bar take off the bottom of the
      screen, measured border-box so the safe-area padding is in it; null when
-     none can be measured, so the CSS token fallback stays in force. */
+     none can be measured, so the token value stays in force. */
   function stickyClearance() {
     const doc = view.ownerDocument;
     if (!doc || typeof doc.querySelector !== 'function') return null;

@@ -343,11 +343,10 @@ label {
 /* The picker: a card that opens inside its row, under the chip, one tap per
    category. It is in flow, so it takes real height and no sticky bar can
    clip it; it has no max-height, so every name is always shown. Scrolling it
-   into view stops short of the sticky entry box and tab bar by their
-   clearance: the screen sets --sticky-bottom-clearance from their measured
-   heights (border-box, so the tab bar's safe-area padding is included), and
-   the token sum below, which adds the safe-area inset itself, stands in
-   until it does. */
+   into view stops short of the sticky entry box and tab bar by
+   --sticky-bottom-clearance: the token sum from tokens.css, which the screen
+   replaces with the bars' measured border-box heights (safe-area padding
+   included) when it can. */
 .category-picker {
   display: grid;
   flex: 0 0 100%;
@@ -355,7 +354,7 @@ label {
   box-sizing: border-box;
   margin: 0;
   padding: var(--space-2);
-  scroll-margin-bottom: var(--sticky-bottom-clearance, calc(var(--control-min-height) * 2 + var(--tab-bar-height) + var(--border-hairline) + var(--safe-area-bottom)));
+  scroll-margin-bottom: var(--sticky-bottom-clearance);
   border: var(--border-hairline) solid var(--color-divider);
   border-radius: var(--radius-control);
   background: var(--color-card);
