@@ -9,10 +9,22 @@
 //    "entries":[{"id":"…","amount":120,"text":"chai","category":"Food",
 //                "createdAt":"<ISO>"}]}
 //
-// The export actually writes the stored records as they are, so an entry may
-// instead be `{"amountPaise":12000,"note":"chai","category":…,"createdAt":ms}`
-// (integer paise), or for older unversioned records `amount` holding paise
-// beside a `note`; both are accepted.
+// The export writes the ledger's stored records as they are, so a real backup
+// holds one of these entry shapes instead (the shape is chosen by its keys):
+//
+//   versioned  {"id":1,"schemaVersion":1,"amountPaise":12000,"note":"chai",
+//               "category":"Food","createdAt":1759300000000}
+//   legacy     {"id":2,"amount":12000,"note":"chai","category":"",
+//               "createdAt":1759300000000}   (older, unversioned: `amount`
+//               holds integer PAISE, as `addEntry` in ./ledger/store.js wrote it)
+//
+// An entry with `amountPaise` is versioned and must carry the `schemaVersion`
+// this build reads. An entry with `note` and no `amountPaise` is legacy. An
+// entry with `text` is the rupee shape below. An entry mixing the shapes
+// (`amountPaise` with `amount` or `text`, or `text` with `note`) is refused,
+// as is any `schemaVersion` this build does not know, and a legacy entry
+// whose `createdAt` is not a number (the stored one always is), so a rupee
+// amount is never read as paise.
 //
 // In the rupee shape `amount` is in rupees (₹120 is 120); it is stored as integer paise through
 // `rupeesToPaise`, the same conversion `addEntry` uses, with no currency
@@ -79,10 +91,17 @@ export function parseBackup(text) {
   const entries = backup.entries.map((entry, index) => {
     const record = toRecord(entry, index);
     const id = entry.id === undefined ? {} : { id: entry.id };
-    // Stored-shape entries (what the export writes) pass through as they are,
-    // so `importEntries` reads them the same way again.
-    if (isStoredShape(entry)) {
-      return { ...id, amountPaise: record.amountPaise, note: record.note, category: entry.category ?? '', createdAt: entry.createdAt };
+    // A stored-shape entry is returned as the versioned shape, so
+    // `importEntries` reads it the same way again.
+    if (shapeOf(entry) !== 'rupees') {
+      return {
+        ...id,
+        schemaVersion: record.schemaVersion,
+        amountPaise: record.amountPaise,
+        note: record.note,
+        category: entry.category ?? '',
+        createdAt: entry.createdAt,
+      };
     }
     return {
       ...id,
@@ -148,8 +167,12 @@ function dedupeKey(record) {
   return JSON.stringify([record.createdAt, record.amountPaise ?? record.amount, record.note ?? '']);
 }
 
-function isStoredShape(entry) {
-  return entry.amountPaise !== undefined || (entry.note !== undefined && entry.text === undefined);
+// 'versioned' and 'legacy' are the stored shapes the export writes; 'rupees'
+// is the hand-written one.
+function shapeOf(entry) {
+  if (entry.amountPaise !== undefined) return 'versioned';
+  if (entry.note !== undefined && entry.text === undefined) return 'legacy';
+  return 'rupees';
 }
 
 function toRecords(entries) {
@@ -157,42 +180,64 @@ function toRecords(entries) {
   return entries.map(toRecord);
 }
 
+// Shared by both amount shapes: `value` must be a finite, non-negative
+// number; `show` formats it for the message.
+function checkAmount(where, value, show) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    throw new Error(`${where} has a non-numeric amount: ${JSON.stringify(value)}.`);
+  }
+  if (value < 0) {
+    throw new Error(`${where} has a negative amount: ${show(value)}.`);
+  }
+}
+
 // A backup entry as the record the ledger stores, or an Error naming what
-// is wrong with it.
+// is wrong with it. `index` is the entry's position, so the numbering is the
+// same whether `parseBackup` or `importEntries` finds the problem.
 function toRecord(entry, index) {
   const where = `Backup entry ${index + 1}`;
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     throw new Error(`${where} is not an object.`);
   }
-  const { amount, category, createdAt } = entry;
-  // The export writes stored records: `amountPaise` and `note`, or for older
-  // unversioned records paise in `amount` beside a `note`. A hand-written
-  // file may instead use rupees in `amount` and `text`.
-  const stored = isStoredShape(entry);
+  const { category, createdAt, schemaVersion } = entry;
+  const shape = shapeOf(entry);
+  if (
+    (shape === 'versioned' && (entry.amount !== undefined || entry.text !== undefined)) ||
+    (entry.text !== undefined && entry.note !== undefined)
+  ) {
+    throw new Error(
+      `${where} mixes entry shapes: use amountPaise with note, or amount (in rupees) with text, not both.`,
+    );
+  }
+  if (schemaVersion !== undefined && schemaVersion !== SCHEMA_VERSION) {
+    throw new Error(
+      `${where} has an unknown schemaVersion ${JSON.stringify(schemaVersion)}; this build reads version ${SCHEMA_VERSION}.`,
+    );
+  }
+  if (shape === 'versioned' && schemaVersion === undefined) {
+    throw new Error(`${where} has an amountPaise but no schemaVersion.`);
+  }
+  if (shape === 'legacy' && typeof createdAt !== 'number') {
+    throw new Error(
+      `${where} has a note and an amount but a createdAt that is not a number; use text for an amount in rupees.`,
+    );
+  }
   const text = entry.text ?? entry.note;
+
   let amountPaise;
-  if (stored) {
-    amountPaise = entry.amountPaise ?? amount;
-    if (typeof amountPaise !== 'number' || !Number.isFinite(amountPaise)) {
-      throw new Error(`${where} has a non-numeric amount: ${JSON.stringify(amountPaise)}.`);
-    }
-    if (amountPaise < 0) {
-      throw new Error(`${where} has a negative amount: ${amountPaise} paise.`);
-    }
-    if (!Number.isInteger(amountPaise) || amountPaise === 0) {
-      throw new Error(`${where} has an amount of ${amountPaise} paise, which is not a positive whole number of paise.`);
-    }
-  } else {
-    if (typeof amount !== 'number' || !Number.isFinite(amount)) {
-      throw new Error(`${where} has a non-numeric amount: ${JSON.stringify(amount)}.`);
-    }
-    if (amount < 0) {
-      throw new Error(`${where} has a negative amount: ₹${amount}.`);
-    }
+  if (shape === 'rupees') {
+    const { amount } = entry;
+    checkAmount(where, amount, (v) => `₹${v}`);
     try {
       amountPaise = rupeesToPaise(amount);
     } catch {
       throw new Error(`${where} has an amount of ₹${amount}, which is not a positive whole number of paise.`);
+    }
+  } else {
+    amountPaise = shape === 'versioned' ? entry.amountPaise : entry.amount;
+    checkAmount(where, amountPaise, (v) => `${v} paise`);
+    if (!Number.isInteger(amountPaise) || amountPaise === 0) {
+      throw new Error(`${where} has an amount of ${amountPaise} paise, which is not a positive whole number of paise.`);
     }
   }
   if (text !== undefined && typeof text !== 'string') {

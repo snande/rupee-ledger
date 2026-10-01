@@ -110,7 +110,13 @@ test("a backup entry's category is kept as phone A had it; only a missing one is
 test('a backup written by serializeBackup from stored records imports, and a re-import adds 0', async () => {
   await add({ amountPaise: 12000, note: 'chai', createdAt: new Date(2026, 8, 30, 9).getTime() });
   await store.addEntry({ amount: 45.5, note: 'auto', createdAt: new Date(2026, 8, 30, 10) });
+  await store.addEntry({ amount: 10, createdAt: new Date(2026, 8, 30, 11) }); // legacy, empty note
   const text = serializeBackup(await store.listEntries(), now);
+  const exported = JSON.parse(text).entries;
+  assert.equal(exported[0].amountPaise, 12000);
+  assert.equal(exported[0].note, 'chai');
+  assert.equal(exported[2].note, '');
+  assert.equal(exported[2].amount, 1000);
   const before = storeTotals();
 
   // Phone B: an empty ledger.
@@ -119,21 +125,46 @@ test('a backup written by serializeBackup from stored records imports, and a re-
   globalThis.indexedDB = fake;
 
   const { entries } = parseBackup(text);
-  assert.deepEqual(await previewImport(store, entries), { added: 2, skipped: 0 });
-  assert.deepEqual(await importEntries(store, entries), { added: 2, skipped: 0 });
+  assert.deepEqual(await previewImport(store, entries), { added: 3, skipped: 0 });
+  assert.deepEqual(await importEntries(store, entries), { added: 3, skipped: 0 });
   assert.deepEqual(storeTotals(), before);
-  assert.deepEqual(storedRecords().map((r) => r.amountPaise), [12000, 4550]);
+  assert.deepEqual(storedRecords().map((r) => r.amountPaise), [12000, 4550, 1000]);
+  assert.ok(storedRecords().every((r) => r.schemaVersion === 1));
 
-  assert.deepEqual(await importEntries(store, parseBackup(text).entries), { added: 0, skipped: 2 });
-  assert.equal(storedRecords().length, 2);
+  assert.deepEqual(await importEntries(store, parseBackup(text).entries), { added: 0, skipped: 3 });
+  assert.equal(storedRecords().length, 3);
   assert.deepEqual(storeTotals(), before);
 });
 
-test('a stored-shape entry with a bad amount is refused, naming the amount', () => {
-  const bad = (entry) => backupText([{ note: 'x', createdAt: 1, ...entry }]);
-  assert.throws(() => parseBackup(bad({ amountPaise: 'a' })), /entry 1 has a non-numeric amount: "a"/);
-  assert.throws(() => parseBackup(bad({ amountPaise: 10.5 })), /whole number of paise/);
-  assert.throws(() => parseBackup(bad({})), /entry 1 has a non-numeric amount: undefined/);
+test('stored-shape entries: createdAt may be a number or an ISO string; bad amounts are refused', async () => {
+  const v = (entry) => backupText([{ schemaVersion: 1, note: 'x', createdAt: 1, ...entry }]);
+  const iso = parseBackup(v({ amountPaise: 500, createdAt: at(3, 9) })).entries;
+  const num = parseBackup(v({ amountPaise: 500, createdAt: new Date(2026, 8, 3, 9).getTime() })).entries;
+  assert.deepEqual(await previewImport(store, iso), { added: 1, skipped: 0 });
+  await importEntries(store, iso);
+  assert.deepEqual(await previewImport(store, num), { added: 0, skipped: 1 });
+
+  assert.throws(() => parseBackup(v({ amountPaise: 'a' })), /entry 1 has a non-numeric amount: "a"/);
+  assert.throws(() => parseBackup(v({ amountPaise: null })), /non-numeric amount: null/);
+  assert.throws(() => parseBackup(v({ amountPaise: 10.5 })), /whole number of paise/);
+  assert.throws(() => parseBackup(v({ amountPaise: 0 })), /whole number of paise/);
+  assert.throws(() => parseBackup(v({ amountPaise: -5 })), /negative amount: -5 paise/);
+  assert.throws(() => parseBackup(backupText([{ note: 'x', createdAt: 1 }])), /entry 1 has a non-numeric amount: undefined/);
+});
+
+test('ambiguous or unknown-version entries are refused, never misread', () => {
+  const entry = (extra) => backupText([backupEntries[0], { createdAt: 1, ...extra }]);
+  // Mixed shapes.
+  assert.throws(() => parseBackup(entry({ amountPaise: 12000, amount: 120, schemaVersion: 1 })), /entry 2 mixes entry shapes/);
+  assert.throws(() => parseBackup(entry({ amountPaise: null, amount: 120, text: 'chai', schemaVersion: 1 })), /entry 2 mixes entry shapes/);
+  assert.throws(() => parseBackup(entry({ amount: 120, text: 'a', note: 'a' })), /entry 2 mixes entry shapes/);
+  // A rupee amount with `note` and an ISO date must not become 120 paise.
+  assert.throws(() => parseBackup(entry({ amount: 120, note: 'chai', createdAt: at(2, 9) })), /use text for an amount in rupees/);
+  // Versions.
+  assert.throws(() => parseBackup(entry({ amountPaise: 100, note: 'x', schemaVersion: 2 })), /entry 2 has an unknown schemaVersion 2/);
+  assert.throws(() => parseBackup(entry({ amountPaise: 100, note: 'x', schemaVersion: '1' })), /unknown schemaVersion "1"/);
+  assert.throws(() => parseBackup(entry({ amountPaise: 100, note: 'x' })), /no schemaVersion/);
+  assert.throws(() => parseBackup(entry({ amount: 100, text: 'x', schemaVersion: 9 })), /unknown schemaVersion 9/);
 });
 
 test('importing the same backup a second time adds nothing and skips all N', async () => {
