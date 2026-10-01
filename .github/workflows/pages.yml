@@ -1,0 +1,45 @@
+name: pages
+
+# Publishes the static app to GitHub Pages exactly as it sits in the
+# repository: index.html, manifest.webmanifest, sw.js and the css/, js/,
+# src/ and icons/ directories, unchanged. There is deliberately no build
+# or bundling step and no server process; GitHub Pages is free static
+# hosting, which is the only target the Mandate allows ("No server or
+# paid hosting; static files only"). Enabling Pages for the repository
+# (Settings -> Pages -> Source: GitHub Actions) is the human step in #99.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deploy at a time; let an in-flight deploy finish rather than
+# cancelling it halfway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Upload the repository's static files as-is
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # The repository root is the site. The action already leaves
+          # out .git and .github; nothing the app loads at runtime is
+          # excluded.
+          path: .
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
