@@ -18,12 +18,13 @@ const PRECACHE_LIMIT_BYTES = 200_000;
 /*
  * Loads sw.js into a fresh context with just enough of the service worker
  * globals: a Cache Storage keyed by absolute URL and a network that records
- * every request, fails while `offline` is set and never answers while
- * `hang` is set. `server` maps a path to the body the network serves for
- * it, or to a response's other fields (`{ status: 404 }`); any other path
- * answers `network:<url>`. `timers` replaces setTimeout and clearTimeout.
+ * every request and fails while `offline` is set. The network serves
+ * `served:<path>` for a path, or what `server` (or `deploy`) gives for it:
+ * a body, or `{ body, status, until }`, where `until` is a promise the
+ * answer waits for. `timers` replaces setTimeout and clearTimeout.
+ * cache.addAll stores all of its responses or none, as browsers do.
  */
-function loadWorker({ caches: existing = {}, offline = false, hang = false, server = {}, timers = {} } = {}) {
+function loadWorker({ caches: existing = {}, offline = false, server = {}, timers = {} } = {}) {
   const handlers = {};
   const network = [];
   const cacheModes = [];
@@ -36,30 +37,24 @@ function loadWorker({ caches: existing = {}, offline = false, hang = false, serv
     return parsed.href;
   };
 
-  const served = (url) => {
-    const path = url.slice(SCOPE.length);
-    const answer = server[path] ?? `network:${url}`;
-    const fields = typeof answer === 'string' ? { body: answer } : answer;
-    const status = fields.status ?? 200;
-    return {
-      body: `network:${url}`,
-      redirected: false,
-      ...fields,
-      status,
-      ok: status >= 200 && status < 300,
-      clone() {
-        return { ...this };
-      },
-    };
-  };
-
   const fetch = async (input, init = {}) => {
     const url = absolute(input);
     network.push(url);
     cacheModes.push(init.cache ?? (typeof input === 'string' ? 'default' : input.cache ?? 'default'));
     if (offline) throw new TypeError('Failed to fetch');
-    if (hang) return new Promise(() => {});
-    return served(url);
+    const answer = server[withoutSearch(url).slice(SCOPE.length)] ?? `served:${withoutSearch(url).slice(SCOPE.length)}`;
+    const fields = typeof answer === 'string' ? { body: answer } : answer;
+    if (fields.until) await fields.until;
+    const status = fields.status ?? 200;
+    return { body: fields.body, status, ok: status >= 200 && status < 300 };
+  };
+
+  const find = (store, request, ignoreSearch) => {
+    const key = ignoreSearch ? withoutSearch(absolute(request)) : absolute(request);
+    for (const [url, hit] of store) {
+      if ((ignoreSearch ? withoutSearch(url) : url) === key) return hit;
+    }
+    return undefined;
   };
 
   const caches = {
@@ -68,15 +63,21 @@ function loadWorker({ caches: existing = {}, offline = false, hang = false, serv
       const store = stores.get(name);
       return {
         async addAll(requests) {
-          for (const request of requests) {
-            const response = await fetch(request);
-            store.set(absolute(request), { body: `cached:${absolute(request)}`, from: response });
-          }
+          const responses = await Promise.all(requests.map((request) => fetch(request)));
+          const bad = responses.findIndex((response) => !response.ok);
+          if (bad !== -1) throw new TypeError(`${absolute(requests[bad])} answered ${responses[bad].status}`);
+          requests.forEach((request, i) => store.set(absolute(request), responses[i]));
         },
         async put(request, response) {
           store.set(absolute(request), response);
         },
+        async match(request, { ignoreSearch = false } = {}) {
+          return find(store, request, ignoreSearch);
+        },
       };
+    },
+    async has(name) {
+      return stores.has(name);
     },
     async keys() {
       return [...stores.keys()];
@@ -85,11 +86,9 @@ function loadWorker({ caches: existing = {}, offline = false, hang = false, serv
       return stores.delete(name);
     },
     async match(request, { ignoreSearch = false } = {}) {
-      const key = ignoreSearch ? withoutSearch(absolute(request)) : absolute(request);
       for (const store of stores.values()) {
-        for (const [url, hit] of store) {
-          if ((ignoreSearch ? withoutSearch(url) : url) === key) return hit;
-        }
+        const hit = find(store, request, ignoreSearch);
+        if (hit) return hit;
       }
       return undefined;
     },
@@ -131,7 +130,7 @@ function loadWorker({ caches: existing = {}, offline = false, hang = false, serv
   });
   vm.runInContext(SOURCE, context, { filename: 'sw.js' });
   // Copied out through JSON so the arrays belong to this realm, not the context's.
-  const constants = JSON.parse(vm.runInContext('JSON.stringify({ VERSION, ASSETS_DIGEST, CACHE, ASSETS })', context));
+  const constants = JSON.parse(vm.runInContext('JSON.stringify({ VERSION, ASSETS_DIGEST, PREFIX, ASSETS })', context));
 
   return {
     ...constants,
@@ -140,15 +139,26 @@ function loadWorker({ caches: existing = {}, offline = false, hang = false, serv
     cacheModes,
     state,
     stores,
+    /* This VERSION's sets, newest first. */
+    sets: () =>
+      [...stores.keys()]
+        .filter((name) => name.startsWith(constants.PREFIX))
+        .sort((x, y) => Number(y.slice(constants.PREFIX.length)) - Number(x.slice(constants.PREFIX.length))),
     setOffline: (value) => {
       offline = value;
     },
-    setHang: (value) => {
-      hang = value;
+    /* Puts new contents for `paths` on the server: `<label>:<path>`. */
+    deploy: (label, paths, fields = {}) => {
+      for (const path of paths) server[path] = { body: `${label}:${path}`, ...fields };
     },
     setServer: (path, answer) => {
       server[path] = answer;
     },
+    /*
+     * Fires `type` and resolves once its answer is ready. A fetch resolves
+     * with its response without waiting for work it hands to waitUntil;
+     * `settled` waits for that too.
+     */
     async dispatch(type, fields = {}) {
       let waited;
       let responded;
@@ -162,10 +172,43 @@ function loadWorker({ caches: existing = {}, offline = false, hang = false, serv
         },
       };
       handlers[type](event);
-      if (waited) await waited;
-      return { responded: responded === undefined ? undefined : await responded, intercepted: responded !== undefined };
+      if (responded === undefined && waited) await waited;
+      return {
+        responded: responded === undefined ? undefined : await responded,
+        intercepted: responded !== undefined,
+        settled: () => waited,
+      };
     },
   };
+}
+
+/* Timers that fire at once, so a refresh that has not finished is too slow. */
+const instantTimers = (delays = []) => ({
+  setTimeout: (fn, ms) => {
+    delays.push(ms);
+    queueMicrotask(fn);
+    return 0;
+  },
+  clearTimeout: () => {},
+});
+
+/* A promise and the function that resolves it. */
+function gate() {
+  let open;
+  const promise = new Promise((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
+}
+
+/* Opens the app as page `clientId`, then loads `paths` for that page. */
+async function openApp(worker, clientId, paths = []) {
+  const page = await worker.dispatch('fetch', { request: request('./', { mode: 'navigate' }), resultingClientId: clientId });
+  const files = {};
+  for (const path of paths) {
+    files[path] = (await worker.dispatch('fetch', { request: request(path), clientId })).responded.body;
+  }
+  return { page: page.responded.body, files, settled: page.settled };
 }
 
 function request(path, { method = 'GET', mode = 'cors' } = {}) {
@@ -222,10 +265,10 @@ function requiredAssets() {
 
 const listed = (assets) => assets.filter((asset) => asset !== './').map((asset) => asset.replace(/^\.\//, ''));
 
-test('the cache name carries the version constant', () => {
+test('the cache names carry the version constant', () => {
   const worker = loadWorker();
   assert.match(worker.VERSION, /\S/);
-  assert.ok(worker.CACHE.includes(worker.VERSION), `${worker.CACHE} does not include ${worker.VERSION}`);
+  assert.ok(worker.PREFIX.includes(worker.VERSION), `${worker.PREFIX} does not include ${worker.VERSION}`);
   assert.match(SOURCE, /const VERSION = /);
 });
 
@@ -315,115 +358,141 @@ test(`the precache list is under ${PRECACHE_LIMIT_BYTES} bytes, icons excluded`,
   assert.ok(total < PRECACHE_LIMIT_BYTES, `precache is ${total} bytes; the limit is under ${PRECACHE_LIMIT_BYTES}`);
 });
 
-test('install precaches every asset into the versioned cache and skips waiting', async () => {
+test('install stores every asset as one set of this version and skips waiting', async () => {
   const worker = loadWorker();
   await worker.dispatch('install');
-  const cached = [...worker.stores.get(worker.CACHE).keys()].sort();
+  const sets = worker.sets();
+  assert.equal(sets.length, 1);
+  const cached = [...worker.stores.get(sets[0]).keys()].sort();
   assert.deepEqual(cached, worker.ASSETS.map((asset) => new URL(asset, SCOPE).href).sort());
   assert.equal(worker.state.skipWaiting, 1);
 });
 
-test('activate deletes every other cache, keeps the current one and claims clients', async () => {
+test('install fails, and keeps no partial set, when a file cannot be fetched', async () => {
+  const worker = loadWorker({ server: { 'src/backup-import.js': { status: 404 } } });
+  await assert.rejects(worker.dispatch('install'));
+  assert.deepEqual(worker.sets(), []);
+  assert.equal(worker.state.skipWaiting, 0);
+});
+
+test('activate deletes every cache that is not a set of this version, and claims clients', async () => {
   const worker = loadWorker({
-    caches: { 'rupee-ledger-v0': [], 'some-other-cache': [] },
+    caches: { 'rupee-ledger-v12': [], 'rupee-ledger-v0': [], 'some-other-cache': [] },
   });
   await worker.dispatch('install');
   await worker.dispatch('activate');
-  assert.deepEqual([...worker.stores.keys()], [worker.CACHE]);
+  assert.deepEqual([...worker.stores.keys()], worker.sets());
+  assert.equal(worker.sets().length, 1);
   assert.equal(worker.state.claim, 1);
-});
-
-test('online, a precached file comes from the network past the HTTP cache and refreshes the cache', async () => {
-  const worker = loadWorker();
-  await worker.dispatch('install');
-  worker.network.length = 0;
-  worker.cacheModes.length = 0;
-  const { responded } = await worker.dispatch('fetch', { request: request('js/app.js?v=2') });
-  assert.equal(responded.body, `network:${SCOPE}js/app.js?v=2`);
-  assert.deepEqual(worker.network, [`${SCOPE}js/app.js?v=2`]);
-  assert.deepEqual(worker.cacheModes, ['no-cache']);
-  assert.equal(worker.stores.get(worker.CACHE).get(`${SCOPE}js/app.js`).body, `network:${SCOPE}js/app.js?v=2`);
 });
 
 /* Test #91: a cache-first worker kept phone B on an old src/backup-import.js
    that refused every backup with "Backup entry 1 has a non-numeric amount:
    undefined", long after the fix was deployed. */
-test('a file changed on the server reaches an installed phone on its next open, with no VERSION bump', async () => {
-  const worker = loadWorker({ server: { 'src/backup-import.js': 'old import' } });
-  await worker.dispatch('install');
-  await worker.dispatch('activate');
-  worker.setServer('src/backup-import.js', 'fixed import');
-
-  const online = await worker.dispatch('fetch', { request: request('src/backup-import.js') });
-  assert.equal(online.responded.body, 'fixed import');
-
-  worker.setOffline(true);
-  const offline = await worker.dispatch('fetch', { request: request('src/backup-import.js') });
-  assert.equal(offline.responded.body, 'fixed import');
-});
-
-test('a slow network falls back to the cached copy', async () => {
-  const delays = [];
-  // Fires every timeout at once, so the test does not wait for it.
-  const setTimeout = (fn, ms) => {
-    delays.push(ms);
-    queueMicrotask(fn);
-    return 0;
-  };
-  const worker = loadWorker({ timers: { setTimeout, clearTimeout: () => {} } });
-  await worker.dispatch('install');
-  worker.setHang(true);
-  const { responded } = await worker.dispatch('fetch', { request: request('js/app.js') });
-  assert.equal(responded.body, `cached:${SCOPE}js/app.js`);
-  const nav = await worker.dispatch('fetch', { request: request('./', { mode: 'navigate' }) });
-  assert.equal(nav.responded.body, `cached:${SCOPE}`);
-  assert.ok(delays.length > 0 && delays.every((ms) => ms > 0 && ms <= 5000), `unexpected timeouts ${delays}`);
-});
-
-test('an error or redirect from the network serves the cached copy and leaves it in place', async () => {
+test('opening the app online loads the deployed files, with no VERSION bump, and keeps them for offline', async () => {
   const worker = loadWorker();
   await worker.dispatch('install');
-  worker.setServer('js/app.js', { status: 500 });
-  worker.setServer('js/router.js', { redirected: true });
-  for (const path of ['js/app.js', 'js/router.js']) {
-    const { responded } = await worker.dispatch('fetch', { request: request(path) });
-    assert.equal(responded.body, `cached:${SCOPE}${path}`);
-    assert.equal(worker.stores.get(worker.CACHE).get(`${SCOPE}${path}`).body, `cached:${SCOPE}${path}`);
+  await worker.dispatch('activate');
+  worker.deploy('v2', ['index.html', 'src/backup-import.js']);
+  worker.cacheModes.length = 0;
+
+  const online = await openApp(worker, 'page-1', ['src/backup-import.js', 'js/app.js']);
+  assert.equal(online.page, 'served:', 'the start URL ./ is served as it is on the server');
+  assert.deepEqual(online.files, { 'src/backup-import.js': 'v2:src/backup-import.js', 'js/app.js': 'served:js/app.js' });
+  assert.deepEqual(new Set(worker.cacheModes), new Set(['no-cache']), 'a refresh must revalidate past the HTTP cache');
+
+  worker.setOffline(true);
+  const offline = await openApp(worker, 'page-2', ['src/backup-import.js']);
+  assert.equal(offline.files['src/backup-import.js'], 'v2:src/backup-import.js');
+});
+
+test('a slow refresh loads every file of the page from the older set, never a mix of versions', async () => {
+  const delays = [];
+  const worker = loadWorker({ timers: instantTimers(delays) });
+  await worker.dispatch('install');
+  // A deploy changes two modules; one answers at once, the other hangs.
+  const hanging = gate();
+  worker.deploy('v2', ['js/app.js']);
+  worker.deploy('v2', ['src/backup-import.js'], { until: hanging.promise });
+
+  const slow = await openApp(worker, 'page-1', ['js/app.js', 'src/backup-import.js']);
+  assert.deepEqual(slow.files, { 'js/app.js': 'served:js/app.js', 'src/backup-import.js': 'served:src/backup-import.js' });
+  assert.ok(delays.length > 0 && delays.every((ms) => ms > 0 && ms <= 5000), `unexpected timeouts ${delays}`);
+
+  // The refresh finishes after the page has opened: the page stays on its
+  // set, and the next open gets the whole new one.
+  hanging.open();
+  await slow.settled();
+  const later = await worker.dispatch('fetch', { request: request('js/app.js'), clientId: 'page-1' });
+  assert.equal(later.responded.body, 'served:js/app.js');
+  const next = await openApp(worker, 'page-2', ['js/app.js', 'src/backup-import.js']);
+  assert.deepEqual(next.files, { 'js/app.js': 'v2:js/app.js', 'src/backup-import.js': 'v2:src/backup-import.js' });
+});
+
+test('a refresh with a file the server refuses keeps the whole older set, and leaves no partial one', async () => {
+  const worker = loadWorker();
+  await worker.dispatch('install');
+  const before = worker.sets();
+  worker.deploy('v2', ['js/app.js']);
+  worker.setServer('src/backup-import.js', { status: 500 });
+
+  const opened = await openApp(worker, 'page-1', ['js/app.js', 'src/backup-import.js']);
+  assert.deepEqual(opened.files, { 'js/app.js': 'served:js/app.js', 'src/backup-import.js': 'served:src/backup-import.js' });
+  assert.deepEqual(worker.sets(), before);
+});
+
+test('a page keeps its set while another page opens onto a newer one', async () => {
+  const worker = loadWorker();
+  await worker.dispatch('install');
+  const first = await openApp(worker, 'page-1');
+  worker.deploy('v2', ['js/app.js', 'src/backup-import.js']);
+  const second = await openApp(worker, 'page-2', ['js/app.js']);
+  assert.equal(second.files['js/app.js'], 'v2:js/app.js');
+  await first.settled();
+
+  for (const path of ['js/app.js', 'src/backup-import.js']) {
+    const { responded } = await worker.dispatch('fetch', { request: request(path), clientId: 'page-1' });
+    assert.equal(responded.body, `served:${path}`, `page-1 got a newer ${path} than the files it opened with`);
   }
-  worker.setServer('some/other/page', { status: 404 });
-  const unknown = await worker.dispatch('fetch', { request: request('some/other/page', { mode: 'navigate' }) });
-  assert.equal(unknown.responded.body, `cached:${SCOPE}index.html`);
+  const unknown = await worker.dispatch('fetch', { request: request('js/app.js'), clientId: 'never-seen' });
+  assert.equal(unknown.responded.body, 'v2:js/app.js', 'a page with no set gets the newest one');
+});
+
+test('the two newest whole sets are kept and older ones deleted', async () => {
+  const worker = loadWorker();
+  await worker.dispatch('install');
+  for (let i = 1; i <= 4; i += 1) await openApp(worker, `page-${i}`);
+  assert.equal(worker.sets().length, 2);
 });
 
 test('a cached asset requested with a query string is still served offline', async () => {
   const worker = loadWorker();
   await worker.dispatch('install');
   worker.setOffline(true);
-  worker.network.length = 0;
   const { responded } = await worker.dispatch('fetch', { request: request('js/app.js?v=2') });
-  assert.equal(responded.body, `cached:${SCOPE}js/app.js`);
+  assert.equal(responded.body, 'served:js/app.js');
 });
 
-test('with no network, opening the app renders the cached shell', async () => {
+test('with no network, opening the app renders the cached shell and every file', async () => {
   const worker = loadWorker();
   await worker.dispatch('install');
   worker.setOffline(true);
-  worker.network.length = 0;
 
   const start = await worker.dispatch('fetch', { request: request('./', { mode: 'navigate' }) });
-  assert.equal(start.responded.body, `cached:${SCOPE}`);
+  assert.equal(start.responded.body, 'served:');
 
   const deep = await worker.dispatch('fetch', { request: request('index.html?from=homescreen', { mode: 'navigate' }) });
-  assert.equal(deep.responded.body, `cached:${SCOPE}index.html`);
+  assert.equal(deep.responded.body, 'served:index.html');
 
   const unknown = await worker.dispatch('fetch', { request: request('some/other/page', { mode: 'navigate' }) });
-  assert.equal(unknown.responded.body, `cached:${SCOPE}index.html`);
+  assert.equal(unknown.responded.body, 'served:index.html');
 
+  worker.network.length = 0;
   for (const asset of worker.ASSETS) {
     const { responded } = await worker.dispatch('fetch', { request: request(asset) });
     assert.ok(responded, `${asset} is not served offline`);
-    assert.match(responded.body, /^cached:/, `${asset} is not served from the cache offline`);
   }
+  assert.deepEqual(worker.network, [], 'a file was fetched instead of served from the set');
 });
 
 test('an uncached same-origin GET that is not a navigation goes to the network', async () => {
@@ -431,8 +500,11 @@ test('an uncached same-origin GET that is not a navigation goes to the network',
   await worker.dispatch('install');
   worker.network.length = 0;
   const { responded } = await worker.dispatch('fetch', { request: request('notes.txt') });
-  assert.equal(responded.body, `network:${SCOPE}notes.txt`);
-  assert.equal(worker.stores.get(worker.CACHE).has(`${SCOPE}notes.txt`), false, 'a runtime response was cached');
+  assert.equal(responded.body, 'served:notes.txt');
+  assert.deepEqual(worker.network, [`${SCOPE}notes.txt`]);
+  for (const set of worker.sets()) {
+    assert.equal(worker.stores.get(set).has(`${SCOPE}notes.txt`), false, 'a runtime response was cached');
+  }
 });
 
 test('non-GET requests are never intercepted', async () => {
