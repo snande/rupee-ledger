@@ -116,7 +116,8 @@ function entryRow(entry, newestId, picking) {
   const id = escapeHtml(entry.id);
   const category = categoryOf(entry);
   const open = sameId(entry.id, picking);
-  return '<li class="entry-row' + (open ? ' entry-row-picking' : '') + (isNew ? ' entry-new' : '') + '">' +
+  const saving = entry.saving === true ? ' aria-busy="true"' : '';
+  return '<li' + saving + ' class="entry-row' + (open ? ' entry-row-picking' : '') + (isNew ? ' entry-new' : '') + '">' +
     note +
     '<span class="amount entry-amount">' + formatPaise(entry.amountPaise) + '</span>' +
     '<button type="button" class="category-chip" data-action="open-category" data-entry-id="' + id + '" ' +
@@ -255,8 +256,11 @@ export function renderToday(state = { status: 'loading' }) {
  * parses the line, has draw() below add the spend at the top of
  * #today-list and re-render both totals in the same task, then writes it
  * with the ledger's add() without waiting, clears the box and keeps focus
- * there. A write that fails takes the spend back out of the list and totals,
- * puts its text back in an empty box and names it in the hint. Spends added
+ * there. Until that write commits the row is marked aria-busy and the
+ * status line says 'Saving'; only once add() resolves does it say 'Added',
+ * so the screen never confirms a spend the store does not hold. A write that
+ * fails takes the spend back out of the list and totals, puts its text back
+ * in an empty box and names it in the hint. Spends added
  * here stay listed across Try again, above whatever the load brings back,
  * until the load returns their stored copy.
  * Each spend's category chip opens a picker of every name in CATEGORIES,
@@ -272,17 +276,15 @@ export function renderToday(state = { status: 'loading' }) {
  * exportBackup() in src/backup-download.js, which downloads the dated JSON
  * file on the phone with no network; a read that fails downloads nothing
  * and shows EXPORT_ERROR under the button.
- * `ledger` defaults to src/ledger.js, or on a demo visit to one that stores
- * nothing. isCurrent() turns false once the router has replaced this screen,
+ * `ledger` defaults to src/ledger.js, the on-device store. isCurrent() turns false once the router has replaced this screen,
  * so a late load writes nothing. Returns the first load's promise, which
  * never rejects.
  */
 export function mountToday({
   main,
-  query = new URLSearchParams(),
   isCurrent = () => true,
   load = loadEntries,
-  ledger = ledgerFor(query),
+  ledger = ledgerFor(),
   backup = exportBackup,
 }) {
   const root = main.querySelector('.today');
@@ -397,17 +399,21 @@ export function mountToday({
     });
   }
 
-  /* Puts a spend Enter has parsed on screen at once, and says what to do
-     when its write settles. */
+  /* Puts a spend Enter has parsed on screen at once, marked as saving, and
+     says what to do when its write settles: 'Added' is announced only once
+     the ledger's add() has resolved, that is once the store holds it. */
   function draw({ amountPaise, note, createdAt }, text) {
     addedCount += 1;
-    const entry = { id: 'added-' + addedCount, amountPaise, note, category: categoryOf({ note }), timestamp: createdAt };
+    const entry = {
+      id: 'added-' + addedCount, amountPaise, note, category: categoryOf({ note }), timestamp: createdAt, saving: true,
+    };
     added = [entry].concat(added);
     newestId = entry.id;
     show();
-    announce('Added ' + spendLabel(entry));
+    announce('Saving ' + spendLabel(entry) + '…');
     return {
       saved(stored) {
+        entry.saving = false;
         if (stored && stored.id !== undefined && stored.id !== null) {
           entry.ledgerId = stored.id;
           /* A category picked while the save was in flight. */
@@ -415,7 +421,9 @@ export function mountToday({
             writeCategory(entry, stored.id, entry.category, stored.category);
           }
         }
-        if (settle()) show();
+        settle();
+        show();
+        if (isCurrent()) announce('Added ' + spendLabel(entry));
       },
       failed() {
         if (!added.includes(entry)) return;
@@ -445,7 +453,7 @@ export function mountToday({
     show();
     let pending;
     try {
-      pending = Promise.resolve(load(query));
+      pending = Promise.resolve(load());
     } catch (error) {
       pending = Promise.reject(error);
     }

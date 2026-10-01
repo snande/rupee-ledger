@@ -2,14 +2,12 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { categoryOf, fromRecord, isDemo, ledgerFor, loadAllEntries, loadEntries, loadMonthEntries } from './ledger.js';
+import { categoryOf, fromRecord, ledgerFor, loadAllEntries, loadEntries, loadMonthEntries } from './ledger.js';
 import { mountToday } from '../screens/today.js';
 import { add, closeLedger, UnknownSchemaVersionError } from '../../src/ledger.js';
 import { addEntry, updateCategory } from '../../src/ledger/store.js';
 import { totals } from '../../src/totals.js';
 import { createFakeIndexedDB, FakeIDBKeyRange } from '../../src/ledger/fake-indexeddb.js';
-
-const query = (text) => new URLSearchParams(text);
 
 /* The fake ledger answers on timers, so wait a few of them out. */
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
@@ -78,7 +76,7 @@ test('a stored record reads as paise and a timestamp the totals understand', () 
 
 test('the quick-entry box writes through the versioned ledger add, and loadEntries reads it back', async () => {
   const at = new Date(2026, 8, 30, 9, 0).getTime();
-  const ledger = ledgerFor(query(''));
+  const ledger = ledgerFor();
   assert.equal(ledger.add, add, 'no wrapper between the box and src/ledger.js');
   const saved = await ledger.add({ amountPaise: 4550, note: 'auto', createdAt: at });
   assert.deepEqual(fromRecord(saved), { id: 1, amountPaise: 4550, note: 'auto', category: 'Transport', timestamp: at });
@@ -87,24 +85,24 @@ test('the quick-entry box writes through the versioned ledger add, and loadEntri
   ]);
 
   await ledger.add({ amountPaise: 12000, note: 'chai', createdAt: at + 1 });
-  const loaded = await loadEntries(query(''), { now: new Date(at) });
+  const loaded = await loadEntries({ now: new Date(at) });
   assert.deepEqual(loaded.map((entry) => [entry.id, entry.amountPaise]), [[2, 12000], [1, 4550]], 'newest first');
 });
 
 test('loadEntries reads only the current month', async () => {
   await add({ amountPaise: 100, note: 'last of August', createdAt: new Date(2026, 7, 31, 23).getTime() });
   await add({ amountPaise: 200, note: 'September', createdAt: new Date(2026, 8, 2, 9).getTime() });
-  const loaded = await loadEntries(query(''), { now: new Date(2026, 8, 30, 12) });
+  const loaded = await loadEntries({ now: new Date(2026, 8, 30, 12) });
   assert.deepEqual(loaded.map((entry) => entry.note), ['September']);
 });
 
 test('a record with an unknown or missing schema version makes the load report it', async () => {
   await add({ amountPaise: 12000, note: 'chai' });
   await addEntry({ amount: 80, note: 'unversioned' });
-  await assert.rejects(loadEntries(query('')), { name: 'UnknownSchemaVersionError' });
+  await assert.rejects(loadEntries(), { name: 'UnknownSchemaVersionError' });
 
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, query: query('') });
+  await mountToday({ main: screen.main });
   assert.match(screen.view.innerHTML, /today-error/);
   assert.equal(shown(screen.view.innerHTML, 'today'), '—', 'no misread sum');
 });
@@ -141,21 +139,18 @@ test('loadMonthEntries refuses a malformed month and reports an unknown schema v
   await assert.rejects(loadMonthEntries('2026-09'), { name: 'UnknownSchemaVersionError' });
 });
 
-test('a state query goes to the stub and stores nothing', async () => {
-  assert.equal(isDemo(query('state=filled')), true);
-  assert.equal(isDemo(query('state=nope')), false);
-  assert.equal(isDemo(query('')), false);
-  const fail = async () => { throw new Error('the ledger should not be touched'); };
-  assert.deepEqual(await loadEntries(query('state=empty'), { list: fail }), []);
-  assert.equal((await loadEntries(query('state=filled'), { list: fail })).length, 4);
-  assert.equal(await ledgerFor(query('state=filled')).add({ amountPaise: 100, note: '', createdAt: 1 }), null);
-  assert.equal(await ledgerFor(query('state=filled')).updateCategory('sample-1', 'Bills'), null);
-  assert.equal(fake.transactions.length, 0);
+test('there is no demo ledger: reads and writes always go to the on-device store', async () => {
+  const at = new Date(2026, 8, 30, 9, 0).getTime();
+  assert.deepEqual(await loadEntries({ now: new Date(at) }), [], 'a fresh store holds no sample entries');
+  assert.equal(ledgerFor().add, add);
+  await ledgerFor().add({ amountPaise: 100, note: 'chai', createdAt: at });
+  assert.equal(storedRecords().length, 1);
+  assert.equal((await loadEntries({ now: new Date(at) })).length, 1);
 });
 
 test('end to end: from an empty ledger, 120 chai then 80 auto shows ₹200 and ₹200, and reloads as ₹200', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, query: query('') });
+  await mountToday({ main: screen.main });
   assert.equal(shown(screen.view.innerHTML, 'today'), '₹0');
   assert.equal(shown(screen.view.innerHTML, 'month'), '₹0');
 
@@ -174,7 +169,7 @@ test('end to end: from an empty ledger, 120 chai then 80 auto shows ₹200 and �
 
   await closeLedger();
   const reopened = fakeScreen();
-  await mountToday({ main: reopened.main, query: query('') });
+  await mountToday({ main: reopened.main });
   assert.equal(shown(reopened.view.innerHTML, 'today'), '₹200');
   assert.equal(shown(reopened.view.innerHTML, 'month'), '₹200');
   assert.match(reopened.view.innerHTML, /2 spends/);
@@ -182,7 +177,7 @@ test('end to end: from an empty ledger, 120 chai then 80 auto shows ₹200 and �
 
 test('end to end: Enter on 120 chai and 50 auto stores Food and Transport in one strict write each', async () => {
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, query: query('') });
+  await mountToday({ main: screen.main });
   const before = fake.transactions.length;
 
   screen.type('120 chai');
@@ -204,7 +199,7 @@ test('today and month totals are the same whether entries carry a category or pr
   const lines = [[12000, 'chai', at], [8000, 'auto', at + 1], [4550, 'rent', new Date(2026, 8, 2, 9).getTime()]];
   const reloadedTotals = async () => {
     await closeLedger();
-    const loaded = await loadEntries(query(''), { now: new Date(at) });
+    const loaded = await loadEntries({ now: new Date(at) });
     return totals(loaded, new Date(at));
   };
 
@@ -229,8 +224,8 @@ test('today and month totals are the same whether entries carry a category or pr
 test('without IndexedDB the load and the save reject, so the screen can say so', async () => {
   await closeLedger();
   globalThis.indexedDB = undefined;
-  await assert.rejects(loadEntries(query('')));
-  await assert.rejects(ledgerFor(query('')).add({ amountPaise: 100, note: '', createdAt: 1 }));
+  await assert.rejects(loadEntries());
+  await assert.rejects(ledgerFor().add({ amountPaise: 100, note: '', createdAt: 1 }));
 });
 
 test('the module is offline and shows no currency but ₹', async () => {
@@ -249,13 +244,13 @@ test('one rule reads an entry\'s category: the one it carries if known, else its
 });
 
 test('the Today screen changes a category through the store update', () => {
-  assert.equal(ledgerFor(query('')).updateCategory, updateCategory);
+  assert.equal(ledgerFor().updateCategory, updateCategory);
 });
 
 test('end to end: tapping a chip then a category stores it, and a reload shows it', async () => {
   await add({ amountPaise: 12000, note: 'chai' });
   const screen = fakeScreen();
-  await mountToday({ main: screen.main, query: query('') });
+  await mountToday({ main: screen.main });
   assert.match(screen.view.innerHTML, /data-entry-id="1" aria-haspopup="listbox" aria-expanded="false" aria-label="Category: Food\. Change category">Food</);
 
   const tap = (attrs, inPicker) => screen.view.dispatch('click', {
@@ -277,7 +272,7 @@ test('end to end: tapping a chip then a category stores it, and a reload shows i
 
   await closeLedger();
   const reopened = fakeScreen();
-  await mountToday({ main: reopened.main, query: query('') });
+  await mountToday({ main: reopened.main });
   assert.match(reopened.view.innerHTML, /aria-label="Category: Health\. Change category">Health</);
 });
 

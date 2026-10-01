@@ -17,10 +17,23 @@ import { mountCompare, renderCompare } from './screens/compare.js';
 import { mountMonth, renderMonth } from './screens/month.js';
 import { mountSearch, renderSearch } from './screens/search.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
+import { closeLedger } from '../src/ledger.js';
+import { createFakeIndexedDB, FakeIDBKeyRange } from '../src/ledger/fake-indexeddb.js';
 
 /* Screens under test here render without their mount, so no data loads. */
 const noMounts = {};
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+/* The fake IndexedDB answers on timers, so wait a few of them out. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+/* A fresh, empty on-device store, as on a newly installed phone. */
+async function freshStore() {
+  await closeLedger();
+  const fake = createFakeIndexedDB();
+  globalThis.indexedDB = fake;
+  globalThis.IDBKeyRange = FakeIDBKeyRange;
+  return fake;
+}
 
 /* Just enough of an element for the router: attributes, innerHTML, focus. */
 function fakeElement(attributes = {}) {
@@ -361,7 +374,8 @@ function todayMain() {
   return { main, parts };
 }
 
-test('opening the app on Today through the router focuses the entry box and loads the forced state', async () => {
+test('opening the app on Today through the router focuses the entry box and loads the empty on-device ledger', async () => {
+  const fake = await freshStore();
   const { main, parts } = todayMain();
   const win = fakeWindow('#/today?state=filled');
   startRouter({ win, main });
@@ -371,28 +385,33 @@ test('opening the app on Today through the router focuses the entry box and load
   assert.equal(main.focused, false);
   assert.match(parts['[data-today-view]'].innerHTML, /aria-busy="true"/);
 
-  await tick();
-  assert.match(parts['[data-today-view]'].innerHTML, /class="entry-list"/);
-  assert.equal(parts['.today'].getAttribute('data-status'), 'filled');
+  await settle();
+  assert.match(parts['[data-today-view]'].innerHTML, /today-empty/, 'no sample entries, even with a state query');
+  assert.equal(parts['.today'].getAttribute('data-status'), 'empty');
 
   parts['#quick-entry'].value = '120 chai';
   parts['[data-today-form]'].dispatch('submit', { preventDefault() {} });
   assert.equal(parts['#quick-entry'].value, '');
-  assert.match(parts['[data-today-view]'].innerHTML, /data-today-total>₹1,610.5</);
+  assert.equal(parts['[data-entry-status]'].textContent, 'Saving ₹120 chai…', 'not confirmed before the write commits');
+
+  await settle();
+  const records = [...fake.databases.get('rupee-ledger').stores.get('entries').records.values()];
+  assert.deepEqual(records.map(({ amountPaise, note }) => ({ amountPaise, note })), [{ amountPaise: 12000, note: 'chai' }]);
+  assert.equal(parts['[data-entry-status]'].textContent, 'Added ₹120 chai');
+  assert.match(parts['[data-today-view]'].innerHTML, /data-today-total>₹120</);
+  assert.doesNotMatch(parts['[data-today-view]'].innerHTML, /<li aria-busy/);
+  await closeLedger();
 });
 
-test('each forced state reaches its own view through the router and the stub', async () => {
-  const seen = {};
+test('no state query forces sample data: every one shows a fresh device\'s empty ledger', async () => {
   for (const state of ['empty', 'filled', 'loading', 'error']) {
+    await freshStore();
     const { main, parts } = todayMain();
     renderRoute({ main, hash: '#/today?state=' + state });
-    await tick();
-    seen[state] = parts['[data-today-view]'].innerHTML;
-    assert.equal(parts['.today'].getAttribute('data-status'), state, state);
+    await settle();
+    assert.match(parts['[data-today-view]'].innerHTML, /today-empty/, state);
+    assert.doesNotMatch(parts['[data-today-view]'].innerHTML, /entry-list/, state);
+    assert.equal(parts['.today'].getAttribute('data-status'), 'empty', state);
   }
-  assert.match(seen.empty, /today-empty/);
-  assert.match(seen.filled, /entry-list/);
-  assert.match(seen.loading, /aria-busy="true"/);
-  assert.match(seen.error, /data-action="retry">Try again</);
-  assert.equal(new Set(Object.values(seen)).size, 4);
+  await closeLedger();
 });
