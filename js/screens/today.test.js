@@ -1066,9 +1066,30 @@ test('a backup that throws at once still shows the error', async () => {
   assert.equal(screen.exportStatus.textContent, EXPORT_ERROR);
 });
 
-test('the Export backup control is styled from tokens', async () => {
-  const css = await readFile(new URL('../../css/controls.css', import.meta.url), 'utf8');
-  for (const name of ['today-backup', 'today-export', 'today-export-status']) {
-    assert.match(css, new RegExp('\\.' + name + '[\\s,{:.[]'), 'no rule for .' + name);
+/* The Export backup control's look comes only from tokens defined in
+   css/tokens.css: its own rules use --space-2, --space-4,
+   --control-min-height and --weight-strong, and the shared .button-secondary
+   and .hint-error rules give it --color-muted, --color-card and
+   --color-sindoor. */
+test('the Export backup control is styled only from tokens in css/tokens.css', async () => {
+  const css = (await readFile(new URL('../../css/controls.css', import.meta.url), 'utf8'))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const tokens = await readFile(new URL('../../css/tokens.css', import.meta.url), 'utf8');
+  const rule = (selector) => {
+    const match = css.match(new RegExp('(?:^|})\\s*' + selector.replace(/[.[\]]/g, '\\$&') + '\\s*\\{([^}]*)\\}'));
+    assert.ok(match, 'no rule for ' + selector);
+    return match[1];
+  };
+  const used = new Set();
+  for (const selector of ['.today-backup', '.today-export', '.today-export-status', '.button-secondary', '.hint-error']) {
+    const body = rule(selector);
+    assert.doesNotMatch(body, /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\(|\d(?:px|rem|em|pt)\b/i, selector + ' holds a raw value');
+    for (const [, name] of body.matchAll(/var\((--[\w-]+)\)/g)) used.add(name);
+  }
+  for (const name of ['--space-2', '--space-4', '--control-min-height', '--weight-strong', '--color-muted', '--color-card', '--color-sindoor']) {
+    assert.ok(used.has(name), name + ' is not used by the control');
+  }
+  for (const name of used) {
+    assert.match(tokens, new RegExp('\\n\\s*' + name + ':'), name + ' is not a token in css/tokens.css');
   }
 });

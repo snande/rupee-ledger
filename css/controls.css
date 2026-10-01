@@ -479,7 +479,9 @@ label {
 }
 
 /* Export backup: a quiet secondary control under the spends, apart from the
-   entry box, with its error line beneath it. */
+   entry box, with its error line beneath it. Every value is a token from
+   css/tokens.css; the button takes its look from .button-secondary and the
+   error line its sindoor from .hint-error. */
 .today-backup {
   display: grid;
   justify-items: start;
