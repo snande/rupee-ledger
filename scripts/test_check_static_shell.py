@@ -30,7 +30,7 @@ class SubPathGuardTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.tree = self.tmp / "tree"
-        shutil.copytree(ROOT, self.tree, ignore=shutil.ignore_patterns(".git", "node_modules"))
+        shutil.copytree(ROOT, self.tree, ignore=shutil.ignore_patterns(".git", "node_modules", "__pycache__"))
 
     def tearDown(self):
         shutil.rmtree(self.tmp)

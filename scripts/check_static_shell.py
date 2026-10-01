@@ -33,10 +33,11 @@ Fails (exit 1) when any of these breaks:
   - manifest.webmanifest or scripts/make_icons.py references another origin
   - the shell is not sub-path safe, so a host serving it at /<repo>/ breaks:
     an index.html src, href or srcset URL is root-absolute ("/..."), the
-    manifest start_url or scope is not "./", an sw.js precache entry (ASSETS
-    or SHELL) is not "./" or a "./" path inside the worker's directory that
-    exists, or js/sw-register.js does not register "./sw.js" or passes a
-    root-absolute script URL or scope
+    manifest.webmanifest start_url or scope is not "./" (or one of its icon
+    src values is root-absolute), an sw.js precache entry (ASSETS or SHELL)
+    is not "./" or a "./" path inside the worker's directory that exists, or
+    js/sw-register.js does not register "./sw.js" or passes a root-absolute
+    script URL or scope
 
 Standard library only, so CI needs nothing but python3.
 
@@ -370,7 +371,7 @@ def check_manifest(root):
             fail(f"{MANIFEST} has no {field}")
     for field in ("start_url", "scope"):
         if isinstance(manifest.get(field), str) and manifest[field] != "./":
-            fail(f"{MANIFEST} {field} is {manifest[field]!r}, not \"./\", so a sub-path host breaks it")
+            fail(f"{MANIFEST} (manifest.webmanifest) {field} is {manifest[field]!r}, not \"./\", so a sub-path host breaks it")
     if manifest.get("display") != "standalone":
         fail(f"{MANIFEST} display is {manifest.get('display')!r}, not \"standalone\"")
 
