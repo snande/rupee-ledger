@@ -240,9 +240,8 @@ test('the screen carries a one-line text input and a submit button, and no other
 
 test('the screen shows no currency but ₹, in its output or its code', async () => {
   const source = await readFile(new URL('./today.js', import.meta.url), 'utf8');
-  const stub = await readFile(new URL('../data/stub.js', import.meta.url), 'utf8');
   const html = renderToday({ status: 'filled', entries: sample });
-  for (const text of [source, stub, html]) {
+  for (const text of [source, html]) {
     assert.doesNotMatch(text, /[$€£¥₩₽¢]|\bUSD\b|\bINR\b|\bRs\.?\s/);
   }
   assert.match(html, /₹/);

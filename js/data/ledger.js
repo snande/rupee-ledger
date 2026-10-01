@@ -1,6 +1,6 @@
 /*
  * The Today screen's data source: the versioned on-device ledger in
- * src/ledger.js, behind the same boundary the stub has. loadEntries()
+ * src/ledger.js. loadEntries()
  * resolves this month's entries, newest first, as { id, amountPaise, note,
  * category, timestamp }: enough for the Today and This month totals and
  * today's list with its category chips. ledgerFor() names the ledger the
@@ -11,19 +11,13 @@
  * integer paise; no rupee conversion happens here. A record with a version the ledger does not know makes the
  * load reject, and the screen reports that rather than misreading it.
  *
- * A known `state` query, as in '#/today?state=filled', still goes to the stub
- * so each screen state can be shown on demand; those visits store nothing.
+ * Every read and write goes to the on-device store; there is no sample or
+ * demo data, so a new phone starts with an empty ledger whatever the URL says.
  */
 
 import { categorise, CATEGORIES } from '../../src/categorise.js';
 import * as ledger from '../../src/ledger.js';
 import { listEntries, updateCategory } from '../../src/ledger/store.js';
-import { currentQuery, requestedState, loadEntries as loadStubEntries } from './stub.js';
-
-/* True when the query asks for a stub state rather than the real ledger. */
-export function isDemo(query = currentQuery()) {
-  return requestedState(query) !== null;
-}
 
 /* An entry's category: the one it carries, or for one without a known
    category (a record from before categories existed) the one its note maps
@@ -45,8 +39,9 @@ export function fromRecord(record) {
   };
 }
 
-export async function loadEntries(query = currentQuery(), { list = ledger.listByMonth, now = new Date() } = {}) {
-  if (isDemo(query)) return loadStubEntries(query);
+/* `_query` is the router's query; it is accepted but no longer changes what
+   is read. */
+export async function loadEntries(_query, { list = ledger.listByMonth, now = new Date() } = {}) {
   const records = await list(now);
   return records.map(fromRecord).reverse();
 }
@@ -111,16 +106,12 @@ export async function loadAllEntries({ list = listEntries } = {}) {
   });
 }
 
-/* On a demo visit Enter and the category picker still show the change, but
-   nothing is stored. */
-const DEMO_LEDGER = Object.freeze({ add: async () => null, updateCategory: async () => null });
-
 /* The real ledger: src/ledger.js's add() for the quick-entry box and the
    store's updateCategory() for the category picker. */
 const LEDGER = Object.freeze({ ...ledger, updateCategory });
 
-/* The ledger the Today screen writes to: the real one, or on a demo visit
-   one whose add() and updateCategory() store nothing and resolve null. */
-export function ledgerFor(query = currentQuery()) {
-  return isDemo(query) ? DEMO_LEDGER : LEDGER;
+/* The ledger the Today screen writes to: always the real, on-device one,
+   whatever the query. */
+export function ledgerFor() {
+  return LEDGER;
 }

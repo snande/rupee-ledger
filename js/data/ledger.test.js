@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { categoryOf, fromRecord, isDemo, ledgerFor, loadAllEntries, loadEntries, loadMonthEntries } from './ledger.js';
+import { categoryOf, fromRecord, ledgerFor, loadAllEntries, loadEntries, loadMonthEntries } from './ledger.js';
 import { mountToday } from '../screens/today.js';
 import { add, closeLedger, UnknownSchemaVersionError } from '../../src/ledger.js';
 import { addEntry, updateCategory } from '../../src/ledger/store.js';
@@ -141,16 +141,17 @@ test('loadMonthEntries refuses a malformed month and reports an unknown schema v
   await assert.rejects(loadMonthEntries('2026-09'), { name: 'UnknownSchemaVersionError' });
 });
 
-test('a state query goes to the stub and stores nothing', async () => {
-  assert.equal(isDemo(query('state=filled')), true);
-  assert.equal(isDemo(query('state=nope')), false);
-  assert.equal(isDemo(query('')), false);
-  const fail = async () => { throw new Error('the ledger should not be touched'); };
-  assert.deepEqual(await loadEntries(query('state=empty'), { list: fail }), []);
-  assert.equal((await loadEntries(query('state=filled'), { list: fail })).length, 4);
-  assert.equal(await ledgerFor(query('state=filled')).add({ amountPaise: 100, note: '', createdAt: 1 }), null);
-  assert.equal(await ledgerFor(query('state=filled')).updateCategory('sample-1', 'Bills'), null);
-  assert.equal(fake.transactions.length, 0);
+test('a state query no longer swaps in sample data: it reads and writes the real ledger', async () => {
+  const at = new Date(2026, 8, 30, 9, 0).getTime();
+  for (const text of ['state=filled', 'state=empty', 'state=error', 'state=loading']) {
+    assert.deepEqual(await loadEntries(query(text), { now: new Date(at) }), [], text);
+    assert.equal(ledgerFor(query(text)), ledgerFor(query('')), text);
+  }
+  const seen = [];
+  await loadEntries(query('state=filled'), { list: async (now) => { seen.push(now); return []; }, now: new Date(at) });
+  assert.equal(seen.length, 1, 'the injected list is read even with a state query');
+  await ledgerFor(query('state=filled')).add({ amountPaise: 100, note: 'chai', createdAt: at });
+  assert.equal(storedRecords().length, 1);
 });
 
 test('end to end: from an empty ledger, 120 chai then 80 auto shows ₹200 and ₹200, and reloads as ₹200', async () => {

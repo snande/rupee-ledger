@@ -272,8 +272,7 @@ export function renderToday(state = { status: 'loading' }) {
  * exportBackup() in src/backup-download.js, which downloads the dated JSON
  * file on the phone with no network; a read that fails downloads nothing
  * and shows EXPORT_ERROR under the button.
- * `ledger` defaults to src/ledger.js, or on a demo visit to one that stores
- * nothing. isCurrent() turns false once the router has replaced this screen,
+ * `ledger` defaults to src/ledger.js, the on-device store. isCurrent() turns false once the router has replaced this screen,
  * so a late load writes nothing. Returns the first load's promise, which
  * never rejects.
  */
@@ -282,7 +281,7 @@ export function mountToday({
   query = new URLSearchParams(),
   isCurrent = () => true,
   load = loadEntries,
-  ledger = ledgerFor(query),
+  ledger = ledgerFor(),
   backup = exportBackup,
 }) {
   const root = main.querySelector('.today');
