@@ -13,9 +13,9 @@
   --color-haldi: #D98E04;   /* accent: primary action, focus ring, active tab */
   --color-sindoor: #C2412D; /* danger: delete, failed import, increase */
 
-  /* Chart: the category set for the Month donut, largest slice first,
-     drawn from the palette and muted neighbours of it. The seventh is the
-     shared Other slice. */
+  /* Chart: the category colours for the Month donut, largest slice first,
+     drawn from the palette and muted neighbours of it. A month with more
+     categories than colours starts the set again. */
   --chart-1: var(--color-haldi);
   --chart-2: #2F6F73;       /* deep teal */
   --chart-3: var(--color-sindoor);

@@ -28,9 +28,9 @@ export const STATUSES = ['loading', 'error', 'filled'];
 export const ERROR_MESSAGE = 'This month did not open.';
 export const EMPTY_MESSAGE = 'No spends this month yet';
 
-/* At most this many slices; past it the smallest categories share one. */
-export const MAX_SLICES = 7;
-export const OTHER = 'Other';
+/* How many --chart-N colours css/tokens.css defines; slices past the last
+   start the set again. */
+export const CHART_COLOURS = 7;
 
 /* The chart's viewBox is 0 0 100 100: a pie of radius 50 at its centre,
    with a hole that turns it into a donut. */
@@ -53,29 +53,12 @@ export function monthSummary(entries, id) {
   return { rows, total };
 }
 
-/* The pie's slices, largest first, each with its colour number from 1.
-   Only categories with spend take a slice. With more than MAX_SLICES of
-   them, the smallest are merged into one Other slice; `members` names the
-   categories each slice stands for. */
+/* The pie's slices: one per category with spend, largest first, each with
+   its colour number from 1, cycling through the CHART_COLOURS set. */
 export function pieSlices(rows) {
-  const spent = (Array.isArray(rows) ? rows : []).filter((row) => row.amount > 0);
-  const own = spent.length > MAX_SLICES ? spent.slice(0, MAX_SLICES - 1) : spent;
-  const slices = own.map((row, i) => ({
-    label: row.category,
-    amount: row.amount,
-    colour: i + 1,
-    members: [row.category],
-  }));
-  const rest = spent.slice(own.length);
-  if (rest.length > 0) {
-    slices.push({
-      label: OTHER,
-      amount: rest.reduce((sum, row) => sum + row.amount, 0),
-      colour: MAX_SLICES,
-      members: rest.map((row) => row.category),
-    });
-  }
-  return slices;
+  return (Array.isArray(rows) ? rows : [])
+    .filter((row) => row.amount > 0)
+    .map((row, i) => ({ label: row.category, amount: row.amount, colour: (i % CHART_COLOURS) + 1 }));
 }
 
 /* A point on the circle, `angle` radians clockwise from twelve o'clock. */
@@ -86,13 +69,19 @@ function point(cx, cy, r, angle) {
 
 /* One wedge from `start` to `end` radians, clockwise from twelve o'clock:
    M cx,cy L x1,y1 A r,r 0 largeArc 1 x2,y2 Z. A whole circle cannot be one
-   arc (its ends meet), so a 100% slice is drawn as a <circle> instead. */
+   arc (its ends meet), so a 100% slice is drawn as a <circle> instead, and a
+   slice so close to whole that its rounded ends meet is drawn as two arcs
+   through its middle, since SVG skips an arc whose ends are the same point. */
 export function slicePath(cx, cy, r, start, end) {
   const [x1, y1] = point(cx, cy, r, start);
   const [x2, y2] = point(cx, cy, r, end);
   const largeArc = end - start > Math.PI ? 1 : 0;
-  return 'M ' + cx + ',' + cy + ' L ' + x1 + ',' + y1 +
-    ' A ' + r + ',' + r + ' 0 ' + largeArc + ' 1 ' + x2 + ',' + y2 + ' Z';
+  let arc = ' A ' + r + ',' + r + ' 0 ' + largeArc + ' 1 ' + x2 + ',' + y2;
+  if (x1 === x2 && y1 === y2 && largeArc) {
+    const [xm, ym] = point(cx, cy, r, (start + end) / 2);
+    arc = ' A ' + r + ',' + r + ' 0 0 1 ' + xm + ',' + ym + ' A ' + r + ',' + r + ' 0 0 1 ' + x2 + ',' + y2;
+  }
+  return 'M ' + cx + ',' + cy + ' L ' + x1 + ',' + y1 + arc + ' Z';
 }
 
 /* The whole number percent of the month's total, for the legend. */
@@ -127,17 +116,9 @@ export function pieSvg(slices, label = 'Spends by category') {
   '</svg>';
 }
 
-/* Each category's colour: its own slice's, or the Other slice's. */
-function colourByCategory(slices) {
-  const colours = new Map();
-  for (const slice of slices) {
-    for (const member of slice.members) colours.set(member, slice.colour);
-  }
-  return colours;
-}
-
+/* A category with no spend has no slice, so its swatch stays plain. */
 function legendView(rows, total, slices) {
-  const colours = colourByCategory(slices);
+  const colours = new Map(slices.map((slice) => [slice.label, slice.colour]));
   const items = rows.map((row) => {
     const colour = colours.get(row.category);
     const swatch = colour

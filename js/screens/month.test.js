@@ -3,12 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import {
+  CHART_COLOURS,
   EMPTY_MESSAGE,
   ERROR_MESSAGE,
-  MAX_SLICES,
   monthSummary,
   mountMonth,
-  OTHER,
   pieSlices,
   renderMonth,
   renderMonthView,
@@ -35,6 +34,7 @@ const filled = (entries, month = '2026-09') => renderMonthView({ status: 'filled
 const total = (html) => (html.match(/data-month-total>([^<]*)</) ?? [])[1];
 const legendAmounts = (html) => [...html.matchAll(/data-legend-amount>([^<]*)</g)].map((m) => m[1]);
 const legendNames = (html) => [...html.matchAll(/<li class="month-legend-row" data-category="([^"]*)"/g)].map((m) => m[1]);
+const sliceNames = (html) => [...html.matchAll(/<path class="month-slice[^"]*" d="[^"]+" data-slice="([^"]*)"/g)].map((m) => m[1]);
 const rupeesToPaise = (text) => Math.round(Number(text.replace(/[₹,]/g, '')) * 100);
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -92,21 +92,38 @@ test('slicePath draws a wedge, with the large-arc flag past half the circle', ()
   assert.match(html, /d="M 50,50 L 0,50 A 50,50 0 0 1 50,0 Z" data-slice="Food"/);
 });
 
-test('past seven categories the smallest share one Other slice; the legend still lists each', () => {
+test('a slice that is nearly the whole month is drawn as two arcs, so it does not vanish', () => {
+  const html = filled([
+    { amountPaise: 10_000_000, category: 'Rent', timestamp: at(9, 1) },
+    { amountPaise: 1, category: 'Pen', timestamp: at(9, 2) },
+  ]);
+  assert.match(html, /d="M 50,50 L 50,0 A 50,50 0 0 1 50,100 A 50,50 0 0 1 50,0 Z" data-slice="Rent"/);
+  /* Every arc ends somewhere other than where it starts. */
+  const rent = html.match(/d="([^"]+)" data-slice="Rent"/)[1];
+  let from = rent.match(/L ([\d.-]+,[\d.-]+)/)[1];
+  for (const [, to] of rent.matchAll(/A 50,50 0 [01] 1 ([\d.-]+,[\d.-]+)/g)) {
+    assert.notEqual(to, from);
+    from = to;
+  }
+  assert.deepEqual(sliceNames(html), ['Rent', 'Pen']);
+});
+
+test('every category with spend gets its own slice, the colours cycling past the last', () => {
   const entries = Array.from({ length: 9 }, (_, i) => ({
     amountPaise: (10 - i) * 1000,
     category: 'Cat ' + (i + 1),
     timestamp: at(9, 1 + i),
   }));
-  const slices = pieSlices(categoryTotalsForMonth(entries, 2026, 9));
-  assert.equal(slices.length, MAX_SLICES);
-  assert.equal(slices.at(-1).label, OTHER);
-  assert.deepEqual(slices.at(-1).members, ['Cat 7', 'Cat 8', 'Cat 9']);
-  assert.equal(slices.at(-1).amount, 4000 + 3000 + 2000);
+  const rows = categoryTotalsForMonth(entries, 2026, 9);
+  const slices = pieSlices(rows);
+  assert.equal(slices.length, rows.length);
+  assert.deepEqual(slices.map((slice) => slice.label), rows.map((row) => row.category));
+  assert.deepEqual(slices.map((slice) => slice.colour), [1, 2, 3, 4, 5, 6, 7, 1, 2]);
+  assert.equal(CHART_COLOURS, 7);
   const html = filled(entries);
   assert.equal(legendNames(html).length, 9);
-  assert.equal((html.match(/<path class="month-slice/g) ?? []).length, MAX_SLICES);
-  assert.match(html, /data-category="Cat 9"><span class="month-swatch month-colour-7"/);
+  assert.deepEqual(sliceNames(html), rows.map((row) => row.category));
+  assert.match(html, /data-category="Cat 9"><span class="month-swatch month-colour-2"/);
 });
 
 test('the legend shows each share as a whole percent', () => {
@@ -219,6 +236,10 @@ test('every class the screen uses is styled from tokens in css/controls.css', as
   for (const name of used) {
     if (hooks.has(name)) continue;
     assert.match(css, new RegExp('\\.' + name + '[\\s,{:.]'), 'no rule for .' + name);
+  }
+  for (let i = 1; i <= CHART_COLOURS; i += 1) {
+    assert.match(css, new RegExp('\\.month-colour-' + i + ' \\{'), 'no rule for .month-colour-' + i);
+    assert.match(tokens, new RegExp('--chart-' + i + ':'), '--chart-' + i + ' is not a token');
   }
   const section = css.slice(css.indexOf('Month screen'), css.indexOf('Tab bar'));
   const body = section.replace(/\/\*[\s\S]*?\*\//g, '');
