@@ -1,6 +1,6 @@
 // Backup import: reads a backup file's text and merges its entries into the
-// on-device ledger. Like the rest of the ledger it is raw IndexedDB with no
-// library and no network; parsing and merging happen entirely on the phone.
+// on-device ledger in ./ledger/store.js. Like the rest of the ledger it uses
+// no library and no network; parsing and merging happen entirely on the phone.
 //
 // A backup file is JSON of this shape (the export writes exactly this, using
 // `BACKUP_FORMAT` and `BACKUP_FORMAT_VERSION` from this module):
@@ -10,24 +10,24 @@
 //                "createdAt":"<ISO>"}]}
 //
 // `amount` is in rupees (₹120 is 120); it is stored as integer paise, the
-// unit the ledger already uses, with no currency conversion.
+// unit the ledger already uses, with no currency conversion. An amount that
+// is not a whole number of paise is refused rather than rounded.
 //
-// Merging never deletes or overwrites: an entry is written with `add` only
-// when no stored entry has the same key, and every write goes in one
-// readwrite transaction, so a failed import leaves nothing behind. The key is
-// `createdAt`, paise and note, not `id`: stored ids are auto-incremented per
-// device, so phone A's entry 1 and phone B's entry 1 are different entries.
-// Imported records get a fresh id and carry `schemaVersion` like those
-// `add` in ./ledger.js writes.
+// Merging never deletes or overwrites: entries are added through
+// `addMissingEntries`, in one readwrite transaction, so a failed import
+// leaves nothing behind. Entries match on `createdAt`, paise and note, not
+// `id`: stored ids are auto-incremented per device, so phone A's entry 1 and
+// phone B's entry 1 are different entries. Matching counts copies, so two
+// identical entries in a backup (two chai logged in the same millisecond)
+// are both imported, and importing that backup again adds neither. Imported
+// records get a fresh id and carry `schemaVersion` like those `add` in
+// ./ledger.js writes.
 
-import { categorise, CATEGORIES } from './categorise.js';
+import { categorise } from './categorise.js';
 import { SCHEMA_VERSION } from './ledger.js';
 
 export const BACKUP_FORMAT = 'rupee-ledger-backup';
 export const BACKUP_FORMAT_VERSION = 1;
-
-const STORE = 'entries';
-const CREATED_AT = 'createdAt';
 
 /**
  * Parses and validates the text of a backup file. Every entry is checked
@@ -79,64 +79,48 @@ export function parseBackup(text) {
 /**
  * Counts what `importEntries` would add and skip, without writing anything,
  * so an import can be previewed before it runs.
- * @param {{ openLedger: () => Promise<IDBDatabase> }} store  ./ledger/store.js.
+ * @param {{ listEntries: () => Promise<object[]> }} store  ./ledger/store.js.
  * @param {Array<object>} entries  as `parseBackup` returns them.
  * @returns {Promise<{ added: number, skipped: number }>}
  */
 export async function previewImport(store, entries) {
   const records = toRecords(entries);
-  const db = await store.openLedger();
-
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readonly');
-    const request = tx.objectStore(STORE).index(CREATED_AT).getAll();
-    tx.oncomplete = () => resolve(split(request.result, records).counts);
-    tx.onerror = tx.onabort = () =>
-      reject(tx.error ?? request.error ?? new Error('The ledger read was aborted.'));
-  });
+  const added = missing(await store.listEntries(), records).length;
+  return { added, skipped: records.length - added };
 }
 
 /**
  * Adds every backup entry not already in the ledger, all in one readwrite
  * transaction, and resolves once it has committed. Existing entries are
  * never deleted or overwritten; if the transaction fails, nothing is added.
- * @param {{ openLedger: () => Promise<IDBDatabase> }} store  ./ledger/store.js.
+ * @param {{ addMissingEntries: (select: (stored: object[]) => object[]) =>
+ *   Promise<number> }} store  ./ledger/store.js.
  * @param {Array<object>} entries  as `parseBackup` returns them.
  * @returns {Promise<{ added: number, skipped: number }>}
  * @throws {Error} when an entry is invalid (nothing is written).
  */
 export async function importEntries(store, entries) {
   const records = toRecords(entries);
-  const db = await store.openLedger();
-
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite', { durability: 'strict' });
-    const objectStore = tx.objectStore(STORE);
-    const request = objectStore.index(CREATED_AT).getAll();
-    let counts;
-    request.onsuccess = () => {
-      const result = split(request.result, records);
-      counts = result.counts;
-      for (const record of result.toAdd) objectStore.add(record);
-    };
-    tx.oncomplete = () => resolve(counts);
-    tx.onerror = tx.onabort = () =>
-      reject(tx.error ?? request.error ?? new Error('The backup import was aborted; nothing was added.'));
-  });
+  const added = await store.addMissingEntries((stored) => missing(stored, records));
+  return { added, skipped: records.length - added };
 }
 
-// The records not yet stored (nor repeated earlier in the backup) and the
-// counts of those added and skipped.
-function split(existing, records) {
-  const seen = new Set(existing.map(dedupeKey));
-  const toAdd = [];
-  for (const record of records) {
+// The records not yet stored. Each stored record matches at most one backup
+// record with its key, so a key the backup holds twice and the store once
+// adds one copy.
+function missing(stored, records) {
+  const counts = new Map();
+  for (const record of stored) {
     const key = dedupeKey(record);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    toAdd.push(record);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
   }
-  return { toAdd, counts: { added: toAdd.length, skipped: records.length - toAdd.length } };
+  return records.filter((record) => {
+    const key = dedupeKey(record);
+    const left = counts.get(key) ?? 0;
+    if (left === 0) return true;
+    counts.set(key, left - 1);
+    return false;
+  });
 }
 
 // Versioned records hold `amountPaise`; older unversioned ones hold paise
@@ -164,8 +148,10 @@ function toRecord(entry, index) {
   if (amount < 0) {
     throw new Error(`${where} has a negative amount: ₹${amount}.`);
   }
+  // The tolerance absorbs float noise (0.29 * 100 is 28.999999999999996)
+  // but not a real fraction of a paisa such as ₹120.005.
   const amountPaise = Math.round(amount * 100);
-  if (amountPaise < 1 || !Number.isSafeInteger(amountPaise)) {
+  if (amountPaise < 1 || !Number.isSafeInteger(amountPaise) || Math.abs(amount * 100 - amountPaise) > 1e-6) {
     throw new Error(`${where} has an amount of ₹${amount}, which is not a positive whole number of paise.`);
   }
   if (text !== undefined && typeof text !== 'string') {
@@ -184,7 +170,9 @@ function toRecord(entry, index) {
     schemaVersion: SCHEMA_VERSION,
     amountPaise,
     note,
-    category: CATEGORIES.includes(category) ? category : categorise(note),
+    // Kept exactly as phone A had it; only an entry with no category gets
+    // one, the way every read fills in an uncategorised entry.
+    category: category || categorise(note),
     createdAt: time,
   };
 }

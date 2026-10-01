@@ -53,6 +53,7 @@ test('parseBackup throws an Error naming the problem, and never partially return
     [backupText([{ text: 'chai', createdAt: at(2, 9) }]), /entry 1 has a non-numeric amount/],
     [backupText([backupEntries[0], { amount: -5, text: 'refund', createdAt: at(2, 9) }]), /entry 2 has a negative amount/],
     [backupText([{ amount: 0, text: 'free', createdAt: at(2, 9) }]), /not a positive whole number of paise/],
+    [backupText([{ amount: 120.005, text: 'chai', createdAt: at(2, 9) }]), /₹120.005, which is not a positive whole number of paise/],
     [backupText([{ amount: 10, text: 'chai', createdAt: 'yesterday' }]), /entry 1 has an invalid createdAt/],
   ];
   for (const [text, message] of cases) {
@@ -86,6 +87,16 @@ test('imported records carry schemaVersion 1, rupee amounts as paise, and read b
   assert.deepEqual(records.map((r) => r.amountPaise), [12000, 4550, 29, 199999]);
 });
 
+test("a backup entry's category is kept as phone A had it; only a missing one is filled in", async () => {
+  const entries = [
+    { amount: 80, text: 'chai', category: 'Gifts', createdAt: at(3, 9) },
+    { amount: 90, text: 'chai', createdAt: at(4, 9) },
+  ];
+  await importEntries(store, parseBackup(backupText(entries)).entries);
+
+  assert.deepEqual(storedRecords().map((r) => r.category), ['Gifts', 'Food']);
+});
+
 test('importing the same backup a second time adds nothing and skips all N', async () => {
   const { entries } = parseBackup(backupText());
   await importEntries(store, entries);
@@ -94,6 +105,28 @@ test('importing the same backup a second time adds nothing and skips all N', asy
   assert.deepEqual(await importEntries(store, entries), { added: 0, skipped: 4 });
   assert.equal(storedRecords().length, 4);
   assert.deepEqual(storeTotals(), before);
+});
+
+test('two identical entries in one backup are both imported, and a re-import adds neither', async () => {
+  const chai = { amount: 20, text: 'chai', category: 'Food', createdAt: at(30, 16) };
+  const { entries } = parseBackup(backupText([chai, { ...chai }]));
+
+  assert.deepEqual(await importEntries(store, entries), { added: 2, skipped: 0 });
+  assert.equal(storedRecords().length, 2);
+  assert.deepEqual(storeTotals(), backupTotals(entries));
+  assert.deepEqual(storeTotals(), { today: 4000, month: 4000 });
+
+  assert.deepEqual(await importEntries(store, entries), { added: 0, skipped: 2 });
+  assert.equal(storedRecords().length, 2);
+  assert.deepEqual(storeTotals(), backupTotals(entries));
+});
+
+test('a key stored once and held twice in the backup adds the one missing copy', async () => {
+  const chai = { amount: 20, text: 'chai', category: 'Food', createdAt: at(30, 16) };
+  await importEntries(store, parseBackup(backupText([chai])).entries);
+
+  assert.deepEqual(await importEntries(store, parseBackup(backupText([chai, chai])).entries), { added: 1, skipped: 1 });
+  assert.equal(storedRecords().length, 2);
 });
 
 test('importing into a store with other entries keeps them and adds only the new backup entries', async () => {
@@ -152,6 +185,12 @@ test('previewImport counts what an import would add and skip without writing', a
   assert.deepEqual(await previewImport(store, entries), { added: 2, skipped: 2 });
   assert.equal(storedRecords().length, 2);
   assert.equal(fake.transactions.filter((tx) => tx.mode === 'readwrite').length, 1);
+});
+
+test('previewImport rejects when the ledger cannot be read', async () => {
+  globalThis.indexedDB = undefined;
+
+  await assert.rejects(previewImport(store, parseBackup(backupText()).entries), /IndexedDB is not available/);
 });
 
 test('the module makes no network request and adds no currency conversion', async () => {

@@ -6,7 +6,9 @@
 // has committed. Resolving on the `add` request's `onsuccess` would let a
 // tab kill between the request and the commit lose an entry the screen had
 // already shown as saved. Each call writes straight away in its own
-// transaction; nothing is buffered, debounced or batched.
+// transaction; nothing is buffered, debounced or batched. The one batch
+// write is `addMissingEntries`, for a backup import: all of it commits in a
+// single transaction or none of it does.
 //
 // Amounts are stored as integer paise (₹120 is 12000) so totals never
 // drift the way sums of fractional rupees do.
@@ -122,6 +124,37 @@ export async function updateCategory(id, category) {
       updated ? resolve(updated) : reject(new Error(`No ledger entry has id ${String(id)}.`));
     tx.onerror = tx.onabort = () =>
       reject(tx.error ?? request.error ?? new Error('The ledger write was aborted.'));
+  });
+}
+
+/**
+ * Adds a batch of records in one readwrite transaction and resolves with how
+ * many were added once it has committed. Inside that transaction it reads
+ * every stored record and calls `select(stored)`, which returns the records
+ * to add. It only ever adds: no stored record is deleted or overwritten. If
+ * the transaction fails, none of the batch is added.
+ * @param {(stored: object[]) => object[]} select  must be synchronous; the
+ *   returned records are written as given, each getting a fresh `id`.
+ * @returns {Promise<number>}
+ */
+export async function addMissingEntries(select) {
+  const db = await openLedger();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite', { durability: 'strict' });
+    const store = tx.objectStore(STORE);
+    const request = store.index(CREATED_AT).getAll();
+    let added = 0;
+    request.onsuccess = () => {
+      for (const record of select(request.result)) {
+        const { id, ...fresh } = record;
+        store.add(fresh);
+        added += 1;
+      }
+    };
+    tx.oncomplete = () => resolve(added);
+    tx.onerror = tx.onabort = () =>
+      reject(tx.error ?? request.error ?? new Error('The ledger write was aborted; nothing was added.'));
   });
 }
 
