@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import {
+  CATEGORIES,
   ENTRY_HINT,
   ERROR_MESSAGE,
   INVALID_HINT,
   formatPaise,
+  categoryOf,
   isToday,
   saveFailedHint,
   mountToday,
@@ -67,6 +69,12 @@ function fakeScreen() {
     '#quick-entry-hint': fakeElement(),
     '[data-entry-status]': fakeElement(),
   };
+  /* The view finds controls to focus by selector, and says which targets
+     sit inside it, as the picker's focus moves and document taps need. */
+  const view = parts['[data-today-view]'];
+  view.focused = null;
+  view.querySelector = (selector) => ({ focus: () => { view.focused = selector; } });
+  view.contains = (target) => Boolean(target && target.insideView);
   return {
     main: { querySelector: (selector) => parts[selector] ?? null },
     root: parts['.today'],
@@ -95,6 +103,58 @@ function type(screen, text) {
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+/* A tap on a control in the view, given the data attributes it renders
+   with; `inPicker` says whether it sits inside the open picker. */
+function tap(view, attrs, inPicker = false) {
+  const button = { getAttribute: (name) => attrs[name] ?? null };
+  view.dispatch('click', {
+    target: {
+      closest: (selector) => (selector === '[data-action]' ? button : selector === '.category-picker' && inPicker ? {} : null),
+    },
+  });
+}
+
+const tapChip = (view, id) => tap(view, { 'data-action': 'open-category', 'data-entry-id': String(id) });
+const tapCategory = (view, id, category) =>
+  tap(view, { 'data-action': 'pick-category', 'data-entry-id': String(id), 'data-category': category }, true);
+/* A tap on the view that lands on no control, inside the picker or not. */
+const tapBlank = (view, inPicker) => view.dispatch('click', {
+  target: { closest: (selector) => (selector === '.category-picker' && inPicker ? {} : null) },
+});
+/* A key pressed on an option of the open picker. */
+const keyOnOption = (view, key, category) => {
+  let prevented = false;
+  view.dispatch('keydown', { key, target: { getAttribute: () => category }, preventDefault: () => { prevented = true; } });
+  return prevented;
+};
+
+/* The name each chip shows, by entry id, in the rendered view. */
+const chips = (html) => Object.fromEntries([...html.matchAll(/class="category-chip"[^>]*data-entry-id="([^"]*)"[^>]*>([^<]*)<\/button>/g)]
+  .map(([, id, name]) => [id, name]));
+const pickerOptions = (html) => [...html.matchAll(/class="category-option[^"]*"[^>]*aria-selected="(true|false)"[^>]*>([^<]*)</g)]
+  .map(([, selected, name]) => [name, selected === 'true']);
+
+/* A page document for the picker's Escape and outside-tap listeners; the
+   screen reads it when it mounts. */
+async function withDocument(fn) {
+  const listeners = new Map();
+  const doc = {
+    listeners,
+    addEventListener: (type, fn) => listeners.set(type, fn),
+    removeEventListener: (type, fn) => { if (listeners.get(type) === fn) listeners.delete(type); },
+    dispatch: (type, event) => listeners.get(type)?.(event),
+  };
+  const had = Object.prototype.hasOwnProperty.call(globalThis, 'document');
+  const previous = globalThis.document;
+  globalThis.document = doc;
+  try {
+    await fn(doc);
+  } finally {
+    if (had) globalThis.document = previous;
+    else delete globalThis.document;
+  }
+}
 
 test('amounts go through the shared formatPaise: ₹, Indian grouping, paise only when present', () => {
   assert.equal(formatPaise, sharedFormatPaise);
@@ -194,6 +254,7 @@ test('every class the screen uses is styled from tokens in css/controls.css', as
     renderTodayView({ status: 'loading' }),
     renderTodayView({ status: 'error' }),
     renderTodayView({ status: 'filled', entries: sample, newestId: 'a' }),
+    renderTodayView({ status: 'filled', entries: sample, picking: 'a' }),
   ].join('');
   /* Section names used only as test and script hooks; the .card rule draws them. */
   const hooks = new Set(['today-empty', 'today-list', 'today-loading']);
@@ -229,6 +290,9 @@ test('every tap target on the screen is at least 44 by 44 CSS pixels', async () 
   assert.match(rule('.quick-entry'), /min-height: var\(--quick-entry-height\)/);
   assert.match(rule('.today-entry-row button'), /min-width: var\(--control-min-height\)/);
   assert.match(rule('.today-cta'), /width: 100%/);
+  assert.match(rule('.category-chip'), /min-height: var\(--control-min-height\)/);
+  assert.match(rule('.category-chip'), /min-width: var\(--control-min-height\)/);
+  assert.match(rule('.category-option'), /min-height: var\(--control-min-height\)/);
   assert.ok(px('--control-min-height') >= 44);
   assert.equal(px('--quick-entry-height'), 56);
 });
@@ -598,4 +662,245 @@ test('a save that fails while the next line is typed keeps that line and names t
   assert.equal(screen.hint.textContent, '₹120 chai was not saved. Type it again to save it.');
   assert.equal(today(screen.view.innerHTML), '₹0');
   assert.equal(saveFailedHint({ amountPaise: 4550, note: '' }, true), '₹45.5 was not saved. Press Enter to try again.');
+});
+
+/* A ledger held in memory: what load() reads back is what updateCategory()
+   last wrote, so a re-render from the store can be checked. */
+function memoryLedger(records) {
+  const calls = [];
+  const ledger = {
+    add: async () => null,
+    async updateCategory(id, category) {
+      calls.push([id, category]);
+      const record = records.find((item) => item.id === id);
+      if (!record) throw new Error('no entry ' + id);
+      record.category = category;
+      return { ...record };
+    },
+  };
+  const load = async () => records.map((record) => ({ ...record }));
+  return { ledger, load, calls };
+}
+
+const chai = () => ({ id: 7, amountPaise: 12000, note: 'chai', category: 'Food', timestamp: now });
+
+test('each row shows its category as a chip, named for assistive tech', () => {
+  const html = renderTodayView({ status: 'filled', entries: [
+    { id: 'a', amountPaise: 12000, note: 'chai', category: 'Health', timestamp: now },
+    { id: 'b', amountPaise: 4550, note: 'auto', timestamp: now },
+  ] });
+  assert.deepEqual(chips(html), { a: 'Health', b: 'Transport' }, 'a spend without a category reads as its note maps');
+  assert.match(html, /<button type="button" class="category-chip" data-action="open-category" data-entry-id="a" aria-haspopup="listbox" aria-expanded="false" aria-label="Category: Health. Change category">Health<\/button>/);
+  assert.match(html, /entry-amount">₹120<\/span><button type="button" class="category-chip"/);
+  assert.doesNotMatch(html, /category-picker/, 'the picker is closed until the chip is tapped');
+  assert.equal(categoryOf({ note: 'chai', category: '' }), 'Food');
+});
+
+test('tapping the chip opens a picker of every category with the current one marked and focused', async () => {
+  const screen = fakeScreen();
+  const { ledger, load, calls } = memoryLedger([chai()]);
+  await mountToday({ main: screen.main, ledger, load });
+  tapChip(screen.view, 7);
+  const html = screen.view.innerHTML;
+  assert.deepEqual(pickerOptions(html), CATEGORIES.map((name) => [name, name === 'Food']));
+  assert.match(html, /<ul class="category-picker" id="category-picker-7" role="listbox" aria-label="Pick a category, now Food">/);
+  assert.match(html, /aria-expanded="true" aria-controls="category-picker-7"/);
+  assert.match(html, /class="category-option category-option-current" role="option" aria-selected="true" tabindex="0"[^>]*>Food<span class="category-option-mark" aria-hidden="true">✓<\/span><\/button>/);
+  assert.equal((html.match(/category-option-mark/g) ?? []).length, 1, 'only the current option carries the tick');
+  assert.equal((html.match(/tabindex="-1"/g) ?? []).length, CATEGORIES.length - 1, 'Tab reaches the current option; arrows the rest');
+  assert.doesNotMatch(html, /Save|Confirm/);
+  assert.equal(screen.view.focused, '.category-option-current');
+  assert.deepEqual(calls, []);
+});
+
+test('the picker styles hold no quoted or raw value, only tokens', async () => {
+  const css = await readFile(new URL('../../css/controls.css', import.meta.url), 'utf8');
+  const body = css.slice(css.indexOf('.category-chip {'), css.indexOf('/* A new spend arrives'))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const [, value] of body.matchAll(/:\s*([^;{}]+);/g)) {
+    assert.doesNotMatch(value, /["']|#[0-9a-f]{3,8}\b|\d(?:px|rem|em|pt)\b/i, value);
+  }
+});
+
+test('the arrow keys, Home and End move focus through the picker', async () => {
+  const screen = fakeScreen();
+  const { ledger, load } = memoryLedger([chai()]);
+  await mountToday({ main: screen.main, ledger, load });
+  tapChip(screen.view, 7);
+  const option = (name) => '.category-option[data-category="' + name + '"]';
+  assert.ok(keyOnOption(screen.view, 'ArrowDown', 'Food'));
+  assert.equal(screen.view.focused, option('Transport'));
+  keyOnOption(screen.view, 'ArrowUp', 'Food');
+  assert.equal(screen.view.focused, option('Other'), 'wraps round');
+  keyOnOption(screen.view, 'ArrowDown', 'Other');
+  assert.equal(screen.view.focused, option('Food'));
+  keyOnOption(screen.view, 'End', 'Food');
+  assert.equal(screen.view.focused, option('Other'));
+  keyOnOption(screen.view, 'Home', 'Other');
+  assert.equal(screen.view.focused, option('Food'));
+  assert.equal(keyOnOption(screen.view, 'a', 'Food'), false, 'other keys pass through');
+  assert.match(screen.view.innerHTML, /category-picker/);
+});
+
+test('one tap on another category saves it, closes the picker and updates the chip at once', async () => {
+  const screen = fakeScreen();
+  const records = [chai(), { id: 8, amountPaise: 4550, note: 'auto', category: 'Transport', timestamp: now }];
+  const { ledger, load, calls } = memoryLedger(records);
+  await mountToday({ main: screen.main, ledger, load });
+
+  tapChip(screen.view, 7);
+  tapCategory(screen.view, 7, 'Health');
+  assert.deepEqual(calls, [[7, 'Health']], 'written through the store update, once');
+  assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+  assert.deepEqual(chips(screen.view.innerHTML), { 7: 'Health', 8: 'Transport' });
+  assert.equal(screen.view.focused, '.category-chip[data-entry-id="7"]', 'focus goes back to the chip');
+  assert.equal(screen.status.textContent, 'Category set to Health');
+
+  await tick();
+  assert.equal(records[0].category, 'Health');
+  /* Try again re-renders from the store. */
+  clickAction(screen.view, 'retry');
+  await tick();
+  assert.deepEqual(chips(screen.view.innerHTML), { 7: 'Health', 8: 'Transport' });
+  assert.deepEqual(chips(renderTodayView({ status: 'filled', entries: await load() })), { 7: 'Health', 8: 'Transport' });
+});
+
+test('tapping the current category or the chip again closes the picker and writes nothing', async () => {
+  const screen = fakeScreen();
+  const { ledger, load, calls } = memoryLedger([chai()]);
+  await mountToday({ main: screen.main, ledger, load });
+  tapChip(screen.view, 7);
+  tapCategory(screen.view, 7, 'Food');
+  assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+  tapChip(screen.view, 7);
+  tapChip(screen.view, 7);
+  assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+  assert.deepEqual(calls, []);
+});
+
+test('Escape or a tap elsewhere in the view closes the picker and leaves the category as it was', async () => {
+  const screen = fakeScreen();
+  const records = [chai()];
+  const { ledger, load, calls } = memoryLedger(records);
+  await mountToday({ main: screen.main, ledger, load });
+
+  tapChip(screen.view, 7);
+  assert.ok(keyOnOption(screen.view, 'Escape', 'Transport'));
+  assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+  assert.equal(screen.view.focused, '.category-chip[data-entry-id="7"]');
+
+  tapChip(screen.view, 7);
+  tapBlank(screen.view, true);
+  assert.match(screen.view.innerHTML, /category-picker/, 'a tap inside the picker keeps it open');
+  tapBlank(screen.view, false);
+  assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+
+  await tick();
+  assert.deepEqual(calls, []);
+  assert.equal(records[0].category, 'Food');
+  assert.deepEqual(chips(screen.view.innerHTML), { 7: 'Food' });
+});
+
+test('a tap outside the Today view closes the picker, writes nothing and lets go of the document', async () => {
+  await withDocument(async (doc) => {
+    const screen = fakeScreen();
+    const records = [chai()];
+    const { ledger, load, calls } = memoryLedger(records);
+    await mountToday({ main: screen.main, ledger, load });
+    assert.equal(doc.listeners.size, 0, 'nothing listens until the picker opens');
+
+    tapChip(screen.view, 7);
+    assert.deepEqual([...doc.listeners.keys()].sort(), ['keydown', 'pointerdown']);
+    doc.dispatch('pointerdown', { target: { insideView: true } });
+    assert.match(screen.view.innerHTML, /category-picker/, 'a press inside the view is left to the view');
+
+    doc.dispatch('pointerdown', { target: { insideView: false } });
+    assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+    assert.equal(doc.listeners.size, 0);
+    await tick();
+    assert.deepEqual(calls, []);
+    assert.equal(records[0].category, 'Food');
+    assert.deepEqual(chips(screen.view.innerHTML), { 7: 'Food' });
+  });
+});
+
+test('Escape with focus outside the Today view closes the picker and lets go of the document', async () => {
+  await withDocument(async (doc) => {
+    const screen = fakeScreen();
+    const { ledger, load, calls } = memoryLedger([chai()]);
+    await mountToday({ main: screen.main, ledger, load });
+    tapChip(screen.view, 7);
+    doc.dispatch('keydown', { key: 'Tab' });
+    assert.match(screen.view.innerHTML, /category-picker/);
+    doc.dispatch('keydown', { key: 'Escape' });
+    assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+    assert.equal(screen.view.focused, '.category-chip[data-entry-id="7"]');
+    assert.equal(doc.listeners.size, 0);
+    assert.deepEqual(calls, []);
+  });
+});
+
+test('once the router replaces the screen, an open picker lets go of the document', async () => {
+  await withDocument(async (doc) => {
+    const screen = fakeScreen();
+    let current = true;
+    const { ledger, load, calls } = memoryLedger([chai()]);
+    await mountToday({ main: screen.main, ledger, load, isCurrent: () => current });
+    tapChip(screen.view, 7);
+    const html = screen.view.innerHTML;
+    current = false;
+    doc.dispatch('pointerdown', { target: { insideView: true } });
+    assert.equal(doc.listeners.size, 0);
+    assert.equal(screen.view.innerHTML, html, 'the old screen is not redrawn');
+    assert.deepEqual(calls, []);
+  });
+});
+
+test('a load that no longer lists the open picker\'s spend closes it and lets go of the document', async () => {
+  await withDocument(async (doc) => {
+    const screen = fakeScreen();
+    let records = [chai(), { id: 8, amountPaise: 4550, note: 'auto', category: 'Transport', timestamp: now }];
+    await mountToday({ main: screen.main, ledger: keep, load: async () => records });
+    tapChip(screen.view, 7);
+    assert.equal(doc.listeners.size, 2);
+    records = [records[1]];
+    clickAction(screen.view, 'retry');
+    await tick();
+    assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+    assert.equal(doc.listeners.size, 0);
+    tapChip(screen.view, 8);
+    assert.match(screen.view.innerHTML, /id="category-picker-8"/, 'another picker still opens');
+  });
+});
+
+test('a category write that fails puts the old one back and says so', async () => {
+  const screen = fakeScreen();
+  const ledger = { add: async () => null, updateCategory: async () => { throw new Error('quota'); } };
+  await mountToday({ main: screen.main, ledger, load: async () => [chai()] });
+  tapChip(screen.view, 7);
+  tapCategory(screen.view, 7, 'Bills');
+  assert.deepEqual(chips(screen.view.innerHTML), { 7: 'Bills' });
+  await tick();
+  assert.deepEqual(chips(screen.view.innerHTML), { 7: 'Food' });
+  assert.equal(screen.status.textContent, 'The category for ₹120 chai was not saved.');
+});
+
+test('a category picked while the spend is still saving is written once the save resolves', async () => {
+  const screen = fakeScreen();
+  let finishSave;
+  const calls = [];
+  const ledger = {
+    add: (entry) => new Promise((resolve) => { finishSave = () => resolve({ id: 42, ...entry, category: 'Food' }); }),
+    updateCategory: async (id, category) => { calls.push([id, category]); },
+  };
+  await mountToday({ main: screen.main, ledger, load: async () => [] });
+  type(screen, '120 chai');
+  assert.deepEqual(chips(screen.view.innerHTML), { 'added-1': 'Food' });
+  tapChip(screen.view, 'added-1');
+  tapCategory(screen.view, 'added-1', 'Entertainment');
+  assert.deepEqual(chips(screen.view.innerHTML), { 'added-1': 'Entertainment' });
+  assert.deepEqual(calls, [], 'no id to write to yet');
+  finishSave();
+  await tick();
+  assert.deepEqual(calls, [[42, 'Entertainment']]);
 });
