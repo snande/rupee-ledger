@@ -31,6 +31,13 @@ Fails (exit 1) when any of these breaks:
     <meta name="theme-color">, or a relative <link rel="apple-touch-icon">
     to a PNG under icons/ that exists
   - manifest.webmanifest or scripts/make_icons.py references another origin
+  - the shell is not sub-path safe, so a host serving it at /<repo>/ breaks:
+    an index.html src, href or srcset URL is root-absolute ("/..."), the
+    manifest.webmanifest start_url or scope is not "./" (or one of its icon
+    src values is root-absolute), an sw.js precache entry (ASSETS or SHELL)
+    is not "./" or a "./" path inside the worker's directory that exists, or
+    js/sw-register.js does not register "./sw.js" or passes a root-absolute
+    script URL or scope
 
 Standard library only, so CI needs nothing but python3.
 
@@ -123,9 +130,17 @@ class ShellParser(HTMLParser):
         self.nav_depth = 0
         self.links = []
         self.theme_colors = []
+        self.urls = []
 
     def handle_starttag(self, tag, attrs):
         attrs = {k.lower(): (v or "") for k, v in attrs}
+        for name in ("src", "href"):
+            if name in attrs:
+                self.urls.append((tag, name, attrs[name].strip()))
+        for name in ("srcset", "imagesrcset"):
+            for candidate in attrs.get(name, "").split(","):
+                if candidate.strip():
+                    self.urls.append((tag, name, candidate.split()[0]))
         if tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split():
             self.stylesheets.append(attrs.get("href", ""))
         if tag == "meta" and attrs.get("name", "").lower() == "viewport":
@@ -355,8 +370,8 @@ def check_manifest(root):
         if not isinstance(manifest.get(field), str) or not manifest[field].strip():
             fail(f"{MANIFEST} has no {field}")
     for field in ("start_url", "scope"):
-        if isinstance(manifest.get(field), str) and not is_relative(manifest[field]):
-            fail(f"{MANIFEST} {field} {manifest[field]!r} is not relative, so a subpath host breaks it")
+        if isinstance(manifest.get(field), str) and manifest[field] != "./":
+            fail(f"{MANIFEST} (manifest.webmanifest) {field} is {manifest[field]!r}, not \"./\", so a sub-path host breaks it")
     if manifest.get("display") != "standalone":
         fail(f"{MANIFEST} display is {manifest.get('display')!r}, not \"standalone\"")
 
@@ -404,6 +419,115 @@ def check_install_tags(root):
         fail('index.html has no <link rel="apple-touch-icon"> pointing under icons/')
     for href in touch_icons:
         check_icon_file(root, href, "index.html apple-touch-icon")
+
+
+# ---------- sub-path safety: index.html, sw.js, js/sw-register.js ----------
+
+SERVICE_WORKER = "sw.js"
+SW_REGISTER = "js/sw-register.js"
+JS_STRING = r"""(['"])(.*?)\1"""
+
+
+def is_root_absolute(url):
+    """True for a same-origin path from the site root, like /index.html."""
+    return url.startswith("/") and not url.startswith("//")
+
+
+def strip_js_comments(js):
+    """Drop // and /* */ comments, leaving string and template literals whole.
+
+    A regex literal holding a quote or // can confuse it; neither sw.js nor
+    js/sw-register.js has one.
+    """
+    out = []
+    i, n, quote = 0, len(js), None
+    while i < n:
+        c = js[i]
+        if quote:
+            out.append(js[i : i + 2] if c == "\\" else c)
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+        elif c in "'\"`":
+            quote = c
+            out.append(c)
+            i += 1
+        elif js.startswith("//", i):
+            end = js.find("\n", i)
+            i = n if end < 0 else end
+        elif js.startswith("/*", i):
+            end = js.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            out.append(" ")
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def check_index_urls(root):
+    index = root / "index.html"
+    if not index.is_file():
+        return
+    parser = ShellParser()
+    parser.feed(index.read_text(encoding="utf-8"))
+    for tag, attr, url in parser.urls:
+        if is_root_absolute(url):
+            fail(f'index.html <{tag} {attr}="{url}"> is root-absolute; make it relative so a sub-path host works')
+
+
+def check_precache_entry(root, label, entry):
+    path = entry.split("?")[0].split("#")[0]
+    if is_root_absolute(entry):
+        fail(f"{SERVICE_WORKER} {label} {entry!r} is root-absolute; a sub-path host fetches the wrong file")
+    elif entry != "./" and not entry.startswith("./"):
+        fail(f"{SERVICE_WORKER} {label} {entry!r} is not \"./\" or a \"./\" path beside the worker")
+    elif ".." in path.split("/"):
+        fail(f"{SERVICE_WORKER} {label} {entry!r} climbs out of the worker's scope")
+    elif entry != "./" and not (root / path[2:]).is_file():
+        fail(f"{SERVICE_WORKER} {label} {entry} does not exist")
+
+
+def check_service_worker(root):
+    path = root / SERVICE_WORKER
+    if not path.is_file():
+        fail(f"{SERVICE_WORKER} is missing at the repository root")
+        return
+    js = strip_js_comments(path.read_text(encoding="utf-8"))
+    assets = re.search(r"\bconst\s+ASSETS\s*=\s*\[(.*?)\]", js, flags=re.S)
+    if not assets:
+        fail(f"{SERVICE_WORKER} has no const ASSETS = [...] precache list")
+        return
+    entries = [m.group(2) for m in re.finditer(JS_STRING, assets.group(1))]
+    if not entries:
+        fail(f"{SERVICE_WORKER} ASSETS lists no files to precache")
+    for entry in entries:
+        check_precache_entry(root, "ASSETS entry", entry)
+    shell = re.search(r"\bconst\s+SHELL\s*=\s*" + JS_STRING, js)
+    if shell:
+        check_precache_entry(root, "SHELL", shell.group(2))
+        if shell.group(2) not in entries:
+            fail(f"{SERVICE_WORKER} SHELL {shell.group(2)!r} is not in ASSETS, so offline navigation has no page")
+
+
+def check_sw_register(root):
+    path = root / SW_REGISTER
+    if not path.is_file():
+        fail(f"{SW_REGISTER} is missing")
+        return
+    js = strip_js_comments(path.read_text(encoding="utf-8"))
+    scripts = [m.group(2) for m in re.finditer(r"\.register\(\s*" + JS_STRING, js)]
+    if "./sw.js" not in scripts:
+        fail(f"{SW_REGISTER} does not call register('./sw.js'), relative to the page")
+    for url in scripts:
+        if url.startswith("/"):
+            fail(f"{SW_REGISTER} registers {url!r}, a root-absolute worker URL")
+    for match in re.finditer(r"\bscope\s*:\s*" + JS_STRING, js):
+        if match.group(2).startswith("/"):
+            fail(f"{SW_REGISTER} passes scope {match.group(2)!r}; a root scope fails to register on a sub-path host")
 
 
 # ---------- remote references and size ----------
@@ -459,6 +583,9 @@ def main(argv):
     check_controls(root, tokens)
     check_manifest(root)
     check_install_tags(root)
+    check_index_urls(root)
+    check_service_worker(root)
+    check_sw_register(root)
     check_remote_refs(root)
     total = check_size(root)
 
@@ -467,7 +594,7 @@ def main(argv):
         for message in failures:
             print(f"  - {message}")
         return 1
-    print(f"Static shell check passed: {len(tokens)} tokens, 4 controls styled, manifest and install icons valid, no remote refs, {total} bytes.")
+    print(f"Static shell check passed: {len(tokens)} tokens, 4 controls styled, manifest and install icons valid, sub-path safe, no remote refs, {total} bytes.")
     return 0
 
 
