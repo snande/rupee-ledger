@@ -24,7 +24,7 @@
  * sw.test.js fails if ASSETS misses a file or lists one the app does not load.
  */
 
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = 'rupee-ledger-' + VERSION;
 const SHELL = './index.html';
 
@@ -40,6 +40,7 @@ const ASSETS = [
   './js/data/ledger.js',
   './js/data/stub.js',
   './js/screens/not-found.js',
+  './js/screens/search.js',
   './js/screens/today.js',
   './src/categorise.js',
   './src/format-amount.js',
@@ -47,6 +48,7 @@ const ASSETS = [
   './src/ledger/store.js',
   './src/parse-entry.js',
   './src/quick-entry.js',
+  './src/search.js',
   './src/totals.js',
   './icons/apple-touch-icon.png',
   './icons/icon-192.png',

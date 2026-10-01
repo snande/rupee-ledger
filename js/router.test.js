@@ -13,6 +13,7 @@ import {
   startRouter,
 } from './router.js';
 import { mountToday, renderToday } from './screens/today.js';
+import { mountSearch, renderSearch } from './screens/search.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
 
 /* Screens under test here render without their mount, so no data loads. */
@@ -55,6 +56,15 @@ test('the routes table maps today to the Today screen', () => {
   assert.equal(DEFAULT_ROUTE, 'today');
   assert.equal(routes.today, renderToday);
   assert.equal(mounts.today, mountToday);
+});
+
+test('the routes table maps search to the Search screen, and index.html has a tab for it', async () => {
+  assert.equal(routes.search, renderSearch);
+  assert.equal(mounts.search, mountSearch);
+  assert.equal(resolveRoute('#/search').render, renderSearch);
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /<nav class="tab-bar"[\s\S]*<a class="tab" href="#\/search" data-route="search">Search<\/a>[\s\S]*<\/nav>/);
 });
 
 test('a query after the path keeps the route and is parsed apart', () => {

@@ -195,6 +195,12 @@ test('ASSETS lists every static file the app needs, each one relative', () => {
   assert.deepEqual([...new Set(names)].sort(), requiredAssets().sort());
 });
 
+test('the Search screen and its matcher are precached, so search works offline', () => {
+  const { ASSETS } = loadWorker();
+  assert.ok(ASSETS.includes('./js/screens/search.js'), 'js/screens/search.js is not precached');
+  assert.ok(ASSETS.includes('./src/search.js'), 'src/search.js is not precached');
+});
+
 test('every precached file exists, so install cannot fail on a 404', () => {
   for (const path of listed(loadWorker().ASSETS)) {
     assert.ok(exists(path), `sw.js precaches ${path}, which does not exist`);
