@@ -64,29 +64,51 @@ export async function loadMonthEntries(month, { list = ledger.listByMonth } = {}
     throw new TypeError('Not a month: ' + JSON.stringify(month) + "; expected 'YYYY-MM'.");
   }
   const records = await list(new Date(Number(match[1]), index, 1));
-  return records.map((record) => ({
+  return records.map((record) => toEntry(record, record.amountPaise));
+}
+
+/* A stored record as the Compare and Search screens see it, with its
+   amount in paise as `amountPaise`. The category is passed on as stored. */
+function toEntry(record, amountPaise) {
+  return {
     id: record.id,
-    amountPaise: record.amountPaise,
+    amountPaise,
     note: record.note ?? '',
     category: record.category,
     timestamp: record.createdAt,
-  }));
+  };
+}
+
+/* A record's amount in integer paise: `amountPaise` on records written by
+   src/ledger.js, `amount` on ones written by the store's addEntry. Null
+   when it has neither. */
+function paiseOf(record) {
+  if (Number.isSafeInteger(record.amountPaise)) return record.amountPaise;
+  if (Number.isSafeInteger(record.amount)) return record.amount;
+  return null;
 }
 
 /* Every stored entry from every month, for the Search screen, read through
    src/ledger/store.js's listEntries, so they come from the on-device store
-   and nothing leaves the phone. Records written by src/ledger.js carry
-   `amountPaise`; ones written by the store's addEntry carry `amount`, also
-   in integer paise. */
+   and nothing leaves the phone. Like the other loads, it rejects rather
+   than misreading: a record whose schemaVersion this build does not know
+   (records from the store's addEntry carry none) rejects with
+   UnknownSchemaVersionError, and one with no whole-paise amount with a
+   TypeError, so the screen shows its error rather than a wrong total. */
 export async function loadAllEntries({ list = listEntries } = {}) {
   const records = await list();
-  return records.map((record) => ({
-    id: record.id,
-    amountPaise: Number.isSafeInteger(record.amountPaise) ? record.amountPaise : record.amount,
-    note: record.note ?? '',
-    category: record.category,
-    timestamp: record.createdAt,
-  }));
+  const unknown = records.filter((record) =>
+    record.schemaVersion !== undefined && record.schemaVersion !== ledger.SCHEMA_VERSION);
+  if (unknown.length > 0) {
+    throw new ledger.UnknownSchemaVersionError(unknown.map(({ id, schemaVersion }) => ({ id, schemaVersion })));
+  }
+  return records.map((record) => {
+    const amountPaise = paiseOf(record);
+    if (amountPaise === null) {
+      throw new TypeError('The ledger holds a record with no amount in paise: id ' + String(record.id) + '.');
+    }
+    return toEntry(record, amountPaise);
+  });
 }
 
 /* On a demo visit Enter and the category picker still show the change, but

@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import {
   dateLabel,
   ERROR_MESSAGE,
+  matchCount,
   mountSearch,
   NO_MATCHES,
   renderSearch,
@@ -23,6 +24,8 @@ const ENTRIES = [
   { id: 4, amountPaise: 8000, note: 'auto', category: 'Transport', timestamp: at(9, 4) },
   { id: 5, amountPaise: 2500, note: 'chai & biscuit', category: 'Food', timestamp: at(9, 20) },
 ];
+
+const CHAI_NOTES = ['chai &amp; biscuit', 'Masala Chai', 'chai'];
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
@@ -90,7 +93,7 @@ test('the screen renders a labelled search field and a results area', () => {
 test('a query lists every match from every month with date, note and ₹ amount, newest first', () => {
   const html = renderSearchView({ status: 'filled', entries: ENTRIES, query: 'chai' });
   assert.match(html, /<ul class="entry-list search-results" data-search-results>/);
-  assert.deepEqual(notes(html), ['chai &amp; biscuit', 'Masala Chai', 'chai']);
+  assert.deepEqual(notes(html), CHAI_NOTES);
   for (const paise of [2500, 1500, 2000]) {
     assert.ok(html.includes('<span class="amount entry-amount">' + formatPaise(paise) + '</span>'), formatPaise(paise));
   }
@@ -109,12 +112,25 @@ test('the total of the matches is shown in ₹ and labelled as such', () => {
   assert.match(html, /\(3 matches\)/);
 });
 
+test('matchCount says 1 match or N matches', () => {
+  assert.equal(matchCount(0), '0 matches');
+  assert.equal(matchCount(1), '1 match');
+  assert.equal(matchCount(3), '3 matches');
+});
+
 test('a non-empty query with no match says so and totals ₹0', () => {
   const html = renderSearchView({ status: 'filled', entries: ENTRIES, query: 'samosa' });
   assert.match(NO_MATCHES, /no matching entries/i);
   assert.match(html, /data-search-none>No matching entries for “samosa”\.<\/p>/);
   assert.equal(totalOf(html), formatPaise(0));
   assert.doesNotMatch(html, /data-search-results/);
+});
+
+test('leading and trailing spaces are ignored, so " chai " finds the chai spends', () => {
+  const html = renderSearchView({ status: 'filled', entries: ENTRIES, query: '  chai ' });
+  assert.deepEqual(notes(html), CHAI_NOTES);
+  assert.equal(totalOf(html), formatPaise(6000));
+  assert.match(renderSearchView({ status: 'filled', entries: ENTRIES, query: '   ' }), /Type part of a note/);
 });
 
 test('notes are escaped, never markup', () => {
@@ -136,7 +152,7 @@ test('typing chai loads every entry and lists the chai spends with their ₹ tot
   await tick();
   assert.equal(calls.count, 1);
   assert.equal(screen.root.getAttribute('data-status'), 'filled');
-  assert.deepEqual(notes(screen.view.innerHTML), ['chai &amp; biscuit', 'Masala Chai', 'chai']);
+  assert.deepEqual(notes(screen.view.innerHTML), CHAI_NOTES);
   assert.equal(totalOf(screen.view.innerHTML), formatPaise(6000));
   assert.equal(screen.status.textContent, '3 matches, ' + formatPaise(6000) + ' in all');
 
@@ -145,6 +161,20 @@ test('typing chai loads every entry and lists the chai spends with their ₹ tot
   assert.equal(calls.count, 2, 'each input loads the entries again');
   assert.match(screen.view.innerHTML, /No matching entries/);
   assert.equal(totalOf(screen.view.innerHTML), formatPaise(0));
+  assert.equal(screen.status.textContent, NO_MATCHES);
+});
+
+test('clearing the field shows the hint and resets the status', async () => {
+  const screen = fakeScreen();
+  await mountSearch({ main: screen.main, load: loader().load });
+  await screen.type('chai');
+  await tick();
+  assert.equal(screen.root.getAttribute('data-status'), 'filled');
+
+  await screen.type('  ');
+  assert.equal(screen.root.getAttribute('data-status'), 'loading');
+  assert.match(screen.view.innerHTML, /Type part of a note/);
+  assert.equal(screen.status.textContent, '');
 });
 
 test('a load overtaken by newer typing writes nothing', async () => {
@@ -158,7 +188,7 @@ test('a load overtaken by newer typing writes nothing', async () => {
   await tick();
   resolvers[0](ENTRIES);
   await tick();
-  assert.deepEqual(notes(screen.view.innerHTML), ['chai &amp; biscuit', 'Masala Chai', 'chai']);
+  assert.deepEqual(notes(screen.view.innerHTML), CHAI_NOTES);
 });
 
 test('nothing is written once the route has moved on', async () => {

@@ -35,6 +35,11 @@ export function dateLabel(timestamp) {
   return Number.isNaN(date.getTime()) ? '' : DATE_LABEL.format(date);
 }
 
+/* '1 match' or '3 matches'. */
+export function matchCount(count) {
+  return count === 1 ? '1 match' : count + ' matches';
+}
+
 function isoDate(timestamp) {
   const date = new Date(timestamp);
   return String(date.getFullYear()).padStart(4, '0') + '-' +
@@ -57,9 +62,8 @@ function matchRow(entry) {
 }
 
 function totalView(paise, count) {
-  const counted = count === 1 ? '1 match' : count + ' matches';
   return '<p class="card total-card search-total">' +
-    '<span class="total-label">' + TOTAL_LABEL + ' <span class="search-count">(' + counted + ')</span></span>' +
+    '<span class="total-label">' + TOTAL_LABEL + ' <span class="search-count">(' + matchCount(count) + ')</span></span>' +
     '<span class="amount total-amount" data-search-total>' + formatPaise(paise) + '</span>' +
   '</p>';
 }
@@ -67,7 +71,7 @@ function totalView(paise, count) {
 function resultsView(entries, query) {
   const { matches, total } = searchEntries(entries, query);
   const list = matches.length === 0
-    ? '<p class="hint search-none" data-search-none>' + NO_MATCHES + ' for “' + escapeHtml(query.trim()) + '”.</p>'
+    ? '<p class="hint search-none" data-search-none>' + NO_MATCHES + ' for “' + escapeHtml(query) + '”.</p>'
     : '<ul class="entry-list search-results" data-search-results>' + matches.map(matchRow).join('') + '</ul>';
   return totalView(total, matches.length) +
     '<section class="card search-list" aria-label="Matching spends">' + list + '</section>';
@@ -98,11 +102,17 @@ function errorView(message) {
   '</section>';
 }
 
+/* The text searched for: the field's value without leading or trailing
+   spaces, so 'chai ' finds the same spends as 'chai'. */
+function cleanQuery(value) {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
 /* The part of the screen under the field. A blank query shows a hint and
    needs no load. */
 export function renderSearchView(state = {}) {
-  const query = typeof state.query === 'string' ? state.query : '';
-  if (query.trim() === '') return hintView();
+  const query = cleanQuery(state.query);
+  if (query === '') return hintView();
   const status = STATUSES.includes(state.status) ? state.status : 'loading';
   if (status === 'error') return errorView(state.message);
   if (status === 'loading') return loadingView();
@@ -166,13 +176,15 @@ export function mountSearch({
 
   function start() {
     const mine = ++attempt;
-    query = typeof input.value === 'string' ? input.value : '';
-    if (query.trim() === '') {
+    query = cleanQuery(input.value);
+    status = 'loading';
+    if (query === '') {
+      /* Nothing to search: the hint shows, and the next query loads afresh. */
+      entries = [];
       show();
       announce('');
       return Promise.resolve();
     }
-    status = 'loading';
     show();
     let pending;
     try {
@@ -189,7 +201,7 @@ export function mountSearch({
         const { matches, total } = searchEntries(entries, query);
         announce(matches.length === 0
           ? NO_MATCHES
-          : (matches.length === 1 ? '1 match' : matches.length + ' matches') + ', ' + formatPaise(total) + ' in all');
+          : matchCount(matches.length) + ', ' + formatPaise(total) + ' in all');
       },
       () => {
         if (mine !== attempt) return;

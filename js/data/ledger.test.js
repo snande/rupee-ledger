@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import { categoryOf, fromRecord, isDemo, ledgerFor, loadAllEntries, loadEntries, loadMonthEntries } from './ledger.js';
 import { mountToday } from '../screens/today.js';
-import { add, closeLedger } from '../../src/ledger.js';
+import { add, closeLedger, UnknownSchemaVersionError } from '../../src/ledger.js';
 import { addEntry, updateCategory } from '../../src/ledger/store.js';
 import { totals } from '../../src/totals.js';
 import { createFakeIndexedDB, FakeIDBKeyRange } from '../../src/ledger/fake-indexeddb.js';
@@ -297,8 +297,33 @@ test('loadAllEntries reads every month from the on-device store, amounts in pais
 
 test('loadAllEntries maps whatever list resolves and passes its rejection on', async () => {
   const entries = await loadAllEntries({
-    list: async () => [{ id: 4, amountPaise: 300, note: 'pen', category: 'Shopping', createdAt: 7 }],
+    list: async () => [
+      { id: 4, schemaVersion: 1, amountPaise: 300, note: 'pen', category: 'Shopping', createdAt: 7 },
+      { id: 5, amount: 1200, note: 'chai', category: 'Food', createdAt: 8 },
+    ],
   });
-  assert.deepEqual(entries, [{ id: 4, amountPaise: 300, note: 'pen', category: 'Shopping', timestamp: 7 }]);
+  assert.deepEqual(entries, [
+    { id: 4, amountPaise: 300, note: 'pen', category: 'Shopping', timestamp: 7 },
+    { id: 5, amountPaise: 1200, note: 'chai', category: 'Food', timestamp: 8 },
+  ]);
   await assert.rejects(loadAllEntries({ list: async () => { throw new Error('no ledger'); } }), /no ledger/);
+});
+
+test('loadAllEntries rejects a record with an unknown schemaVersion rather than misreading it', async () => {
+  const list = async () => [
+    { id: 1, schemaVersion: 1, amountPaise: 300, note: 'pen', createdAt: 7 },
+    { id: 2, schemaVersion: 2, amountPaise: 400, note: 'chai', createdAt: 8 },
+  ];
+  await assert.rejects(loadAllEntries({ list }), (error) => {
+    assert.ok(error instanceof UnknownSchemaVersionError);
+    assert.deepEqual(error.records, [{ id: 2, schemaVersion: 2 }]);
+    return true;
+  });
+});
+
+test('loadAllEntries rejects a record with no whole-paise amount rather than totalling NaN', async () => {
+  for (const bad of [{}, { amountPaise: 12.5 }, { amount: '1200' }, { amountPaise: null, amount: undefined }]) {
+    const list = async () => [{ id: 9, note: 'chai', createdAt: 7, ...bad }];
+    await assert.rejects(loadAllEntries({ list }), TypeError, JSON.stringify(bad));
+  }
 });
