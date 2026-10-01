@@ -6,6 +6,7 @@ import { parseBackup, importEntries, previewImport, BACKUP_FORMAT, BACKUP_FORMAT
 import * as store from './ledger/store.js';
 import { add, listByMonth } from './ledger.js';
 import { totals } from './totals.js';
+import { serializeBackup } from './backup-export.js';
 import { createFakeIndexedDB, FakeIDBKeyRange } from './ledger/fake-indexeddb.js';
 
 let fake;
@@ -104,6 +105,35 @@ test("a backup entry's category is kept as phone A had it; only a missing one is
   await importEntries(store, parseBackup(backupText(entries)).entries);
 
   assert.deepEqual(storedRecords().map((r) => r.category), ['Gifts', 'Food']);
+});
+
+test('a backup written by serializeBackup from stored records imports, and a re-import adds 0', async () => {
+  await add({ amountPaise: 12000, note: 'chai', createdAt: new Date(2026, 8, 30, 9).getTime() });
+  await store.addEntry({ amount: 45.5, note: 'auto', createdAt: new Date(2026, 8, 30, 10) });
+  const text = serializeBackup(await store.listEntries(), now);
+  const before = storeTotals();
+
+  // Phone B: an empty ledger.
+  await store.closeLedger();
+  fake = createFakeIndexedDB();
+  globalThis.indexedDB = fake;
+
+  const { entries } = parseBackup(text);
+  assert.deepEqual(await previewImport(store, entries), { added: 2, skipped: 0 });
+  assert.deepEqual(await importEntries(store, entries), { added: 2, skipped: 0 });
+  assert.deepEqual(storeTotals(), before);
+  assert.deepEqual(storedRecords().map((r) => r.amountPaise), [12000, 4550]);
+
+  assert.deepEqual(await importEntries(store, parseBackup(text).entries), { added: 0, skipped: 2 });
+  assert.equal(storedRecords().length, 2);
+  assert.deepEqual(storeTotals(), before);
+});
+
+test('a stored-shape entry with a bad amount is refused, naming the amount', () => {
+  const bad = (entry) => backupText([{ note: 'x', createdAt: 1, ...entry }]);
+  assert.throws(() => parseBackup(bad({ amountPaise: 'a' })), /entry 1 has a non-numeric amount: "a"/);
+  assert.throws(() => parseBackup(bad({ amountPaise: 10.5 })), /whole number of paise/);
+  assert.throws(() => parseBackup(bad({})), /entry 1 has a non-numeric amount: undefined/);
 });
 
 test('importing the same backup a second time adds nothing and skips all N', async () => {

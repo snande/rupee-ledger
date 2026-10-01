@@ -9,7 +9,12 @@
 //    "entries":[{"id":"…","amount":120,"text":"chai","category":"Food",
 //                "createdAt":"<ISO>"}]}
 //
-// `amount` is in rupees (₹120 is 120); it is stored as integer paise through
+// The export actually writes the stored records as they are, so an entry may
+// instead be `{"amountPaise":12000,"note":"chai","category":…,"createdAt":ms}`
+// (integer paise), or for older unversioned records `amount` holding paise
+// beside a `note`; both are accepted.
+//
+// In the rupee shape `amount` is in rupees (₹120 is 120); it is stored as integer paise through
 // `rupeesToPaise`, the same conversion `addEntry` uses, with no currency
 // conversion. An amount that is not a whole number of paise is refused
 // rather than rounded.
@@ -72,9 +77,15 @@ export function parseBackup(text) {
   }
 
   const entries = backup.entries.map((entry, index) => {
-    toRecord(entry, index);
+    const record = toRecord(entry, index);
+    const id = entry.id === undefined ? {} : { id: entry.id };
+    // Stored-shape entries (what the export writes) pass through as they are,
+    // so `importEntries` reads them the same way again.
+    if (isStoredShape(entry)) {
+      return { ...id, amountPaise: record.amountPaise, note: record.note, category: entry.category ?? '', createdAt: entry.createdAt };
+    }
     return {
-      ...(entry.id === undefined ? {} : { id: entry.id }),
+      ...id,
       amount: entry.amount,
       text: entry.text ?? '',
       category: entry.category ?? '',
@@ -137,6 +148,10 @@ function dedupeKey(record) {
   return JSON.stringify([record.createdAt, record.amountPaise ?? record.amount, record.note ?? '']);
 }
 
+function isStoredShape(entry) {
+  return entry.amountPaise !== undefined || (entry.note !== undefined && entry.text === undefined);
+}
+
 function toRecords(entries) {
   if (!Array.isArray(entries)) throw new Error('Backup entries must be an array.');
   return entries.map(toRecord);
@@ -149,18 +164,36 @@ function toRecord(entry, index) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
     throw new Error(`${where} is not an object.`);
   }
-  const { amount, text, category, createdAt } = entry;
-  if (typeof amount !== 'number' || !Number.isFinite(amount)) {
-    throw new Error(`${where} has a non-numeric amount: ${JSON.stringify(amount)}.`);
-  }
-  if (amount < 0) {
-    throw new Error(`${where} has a negative amount: ₹${amount}.`);
-  }
+  const { amount, category, createdAt } = entry;
+  // The export writes stored records: `amountPaise` and `note`, or for older
+  // unversioned records paise in `amount` beside a `note`. A hand-written
+  // file may instead use rupees in `amount` and `text`.
+  const stored = isStoredShape(entry);
+  const text = entry.text ?? entry.note;
   let amountPaise;
-  try {
-    amountPaise = rupeesToPaise(amount);
-  } catch {
-    throw new Error(`${where} has an amount of ₹${amount}, which is not a positive whole number of paise.`);
+  if (stored) {
+    amountPaise = entry.amountPaise ?? amount;
+    if (typeof amountPaise !== 'number' || !Number.isFinite(amountPaise)) {
+      throw new Error(`${where} has a non-numeric amount: ${JSON.stringify(amountPaise)}.`);
+    }
+    if (amountPaise < 0) {
+      throw new Error(`${where} has a negative amount: ${amountPaise} paise.`);
+    }
+    if (!Number.isInteger(amountPaise) || amountPaise === 0) {
+      throw new Error(`${where} has an amount of ${amountPaise} paise, which is not a positive whole number of paise.`);
+    }
+  } else {
+    if (typeof amount !== 'number' || !Number.isFinite(amount)) {
+      throw new Error(`${where} has a non-numeric amount: ${JSON.stringify(amount)}.`);
+    }
+    if (amount < 0) {
+      throw new Error(`${where} has a negative amount: ₹${amount}.`);
+    }
+    try {
+      amountPaise = rupeesToPaise(amount);
+    } catch {
+      throw new Error(`${where} has an amount of ₹${amount}, which is not a positive whole number of paise.`);
+    }
   }
   if (text !== undefined && typeof text !== 'string') {
     throw new Error(`${where} has a text that is not a string.`);
