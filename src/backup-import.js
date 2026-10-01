@@ -181,8 +181,12 @@ function toRecords(entries) {
 }
 
 // Shared by both amount shapes: `value` must be a finite, non-negative
-// number; `show` formats it for the message.
+// number; `show` formats it for the message. An entry with no amount at all
+// is told which fields carry one, rather than shown "undefined".
 function checkAmount(where, value, show) {
+  if (value === undefined) {
+    throw new Error(`${where} has no amount: expected amountPaise (in paise) or amount (in rupees).`);
+  }
   if (typeof value !== 'number' || !Number.isFinite(value)) {
     throw new Error(`${where} has a non-numeric amount: ${JSON.stringify(value)}.`);
   }

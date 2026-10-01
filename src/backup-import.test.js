@@ -51,7 +51,7 @@ test('parseBackup throws an Error naming the problem, and never partially return
     [backupText([], { version: '1' }), /Unknown backup format version "1"/],
     [backupText([], { entries: undefined }), /no entries list/],
     [backupText([...backupEntries, { amount: '120', text: 'chai', createdAt: at(2, 9) }]), /entry 5 has a non-numeric amount/],
-    [backupText([{ text: 'chai', createdAt: at(2, 9) }]), /entry 1 has a non-numeric amount/],
+    [backupText([{ text: 'chai', createdAt: at(2, 9) }]), /entry 1 has no amount: expected amountPaise \(in paise\) or amount \(in rupees\)/],
     [backupText([backupEntries[0], { amount: -5, text: 'refund', createdAt: at(2, 9) }]), /entry 2 has a negative amount/],
     [backupText([{ amount: 0, text: 'free', createdAt: at(2, 9) }]), /not a positive whole number of paise/],
     [backupText([{ amount: 120.005, text: 'chai', createdAt: at(2, 9) }]), /₹120.005, which is not a positive whole number of paise/],
@@ -149,7 +149,7 @@ test('stored-shape entries: createdAt may be a number or an ISO string; bad amou
   assert.throws(() => parseBackup(v({ amountPaise: 10.5 })), /whole number of paise/);
   assert.throws(() => parseBackup(v({ amountPaise: 0 })), /whole number of paise/);
   assert.throws(() => parseBackup(v({ amountPaise: -5 })), /negative amount: -5 paise/);
-  assert.throws(() => parseBackup(backupText([{ note: 'x', createdAt: 1 }])), /entry 1 has a non-numeric amount: undefined/);
+  assert.throws(() => parseBackup(backupText([{ note: 'x', createdAt: 1 }])), /entry 1 has no amount/);
 });
 
 test('ambiguous or unknown-version entries are refused, never misread', () => {
@@ -269,4 +269,52 @@ test('the module makes no network request and adds no currency conversion', asyn
   const source = await readFile(new URL('./backup-import.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /\bfetch\b|XMLHttpRequest|WebSocket|sendBeacon|EventSource/);
   assert.doesNotMatch(source, /\b(USD|EUR|exchange rate|convertCurrency)\b/i);
+});
+
+/* Regression for #107: phone A's spends typed into the quick-entry box, the
+   file the Export backup button downloads, and phone B's import of it. The
+   three values the operator compares are read the way the Today screen
+   reads them (loadEntries, then totals). */
+test('export on phone A, import on phone B: same entries and totals, and a second import adds 0', async () => {
+  const { exportBackup } = await import('./backup-download.js');
+  const { parseEntry } = await import('./parse-entry.js');
+  const { loadEntries } = await import('../js/data/ledger.js');
+
+  const lines = [
+    ['120 chai', new Date(2026, 8, 30, 9)],
+    ['₹45.50 auto', new Date(2026, 8, 30, 10)],
+    ['1999.99 shoes', new Date(2026, 8, 12, 18)],
+    ['120 chai', new Date(2026, 8, 30, 9)], // the same spend twice in one millisecond
+  ];
+  for (const [line, when] of lines) await add({ ...parseEntry(line), createdAt: when.getTime() });
+  const onPage = async () => {
+    const entries = await loadEntries({ now });
+    return { ...totals(entries, now), count: entries.length };
+  };
+  const phoneA = await onPage();
+  assert.deepEqual(phoneA, { today: 28550, month: 228549, count: 4 });
+
+  let blob;
+  await exportBackup({
+    now,
+    doc: { body: { appendChild() {} }, createElement: () => ({ setAttribute() {}, click() {}, remove() {} }) },
+    url: { createObjectURL: (b) => ((blob = b), 'blob:backup'), revokeObjectURL() {} },
+  });
+  const file = await blob.text();
+
+  // Phone B: an empty ledger.
+  await store.closeLedger();
+  fake = createFakeIndexedDB();
+  globalThis.indexedDB = fake;
+
+  const { entries } = parseBackup(file);
+  assert.deepEqual(await importEntries(store, entries), { added: 4, skipped: 0 });
+  assert.deepEqual(await onPage(), phoneA);
+  assert.deepEqual(
+    (await loadEntries({ now })).map(({ amountPaise, note }) => [amountPaise, note]).sort(),
+    [[12000, 'chai'], [12000, 'chai'], [199999, 'shoes'], [4550, 'auto']],
+  );
+
+  assert.deepEqual(await importEntries(store, parseBackup(file).entries), { added: 0, skipped: 4 });
+  assert.deepEqual(await onPage(), phoneA);
 });
