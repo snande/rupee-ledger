@@ -334,12 +334,14 @@ label {
   color: var(--color-ink);
 }
 
-/* The picker: a card that floats under the row, one tap per category. */
+/* The picker: a card that floats under the row, one tap per category. It
+   sits above the sticky header, entry box and tab bar, so none of them hides
+   its last names; it has no max-height, so every name is always shown. */
 .category-picker {
   position: absolute;
   top: 100%;
   right: 0;
-  z-index: var(--layer-frame);
+  z-index: var(--layer-popover);
   display: grid;
   gap: var(--space-1);
   min-width: 50%;

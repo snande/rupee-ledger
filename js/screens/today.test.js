@@ -731,6 +731,39 @@ test('the picker styles hold no quoted or raw value, only tokens', async () => {
   }
 });
 
+test('the picker sits above the sticky bars and is never cut short, so Other shows', async () => {
+  const css = (await readFile(new URL('../../css/controls.css', import.meta.url), 'utf8'))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  const tokens = await readFile(new URL('../../css/tokens.css', import.meta.url), 'utf8');
+  const rule = (selector) => css.match(new RegExp('(?:^|})\\s*' + selector.replace('.', '\\.') + '\\s*\\{([^}]*)\\}'))[1];
+  const layer = (name) => Number(tokens.match(new RegExp(name + ':\\s*(\\d+);'))[1]);
+  const zOf = (selector) => layer(rule(selector).match(/z-index:\s*var\((--[\w-]+)\)/)[1]);
+  const picker = rule('.category-picker');
+  assert.match(picker, /z-index:\s*var\(--layer-popover\)/);
+  for (const bar of ['.today-entry', '.tab-bar']) {
+    assert.ok(zOf('.category-picker') > zOf(bar), 'the picker draws over ' + bar);
+  }
+  assert.doesNotMatch(picker, /max-height|overflow/, 'no name is clipped or scrolled away');
+});
+
+test('opening the picker lists Other last and scrolls the whole picker into view', async () => {
+  const screen = fakeScreen();
+  const scrolled = [];
+  const find = screen.view.querySelector;
+  screen.view.querySelector = (selector) => ({
+    ...find(selector),
+    scrollIntoView: (options) => scrolled.push([selector, options]),
+  });
+  const { ledger, load } = memoryLedger([chai()]);
+  await mountToday({ main: screen.main, ledger, load });
+  tapChip(screen.view, 7);
+  const names = pickerOptions(screen.view.innerHTML).map(([name]) => name);
+  assert.deepEqual(names, CATEGORIES);
+  assert.equal(names.at(-1), 'Other');
+  assert.deepEqual(scrolled, [['.category-picker', { block: 'nearest' }]]);
+  assert.equal(screen.view.focused, '.category-option-current', 'focus stays on the current name');
+});
+
 test('the arrow keys, Home and End move focus through the picker', async () => {
   const screen = fakeScreen();
   const { ledger, load } = memoryLedger([chai()]);

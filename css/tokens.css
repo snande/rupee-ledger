@@ -69,6 +69,7 @@
   --tab-indicator-width: var(--focus-ring-width);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --layer-frame: 1;                                             /* bars above scrolling content */
+  --layer-popover: 2;                                           /* menus above the bars */
 
   /* Motion: a quick shake for a bad entry, a brief haldi flash for a new
      row, a slow pulse for skeletons. */
