@@ -2,7 +2,8 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { openLedger, closeLedger, addEntry, listEntries } from './store.js';
+import { openLedger, closeLedger, addEntry, listEntries, updateCategory } from './store.js';
+import { CATEGORIES } from '../categorise.js';
 
 // Node has no IndexedDB, and the project takes no dependencies, so the tests
 // drive the store through a small in-memory stand-in. It keeps the parts of
@@ -110,6 +111,21 @@ function createFakeIndexedDB() {
         if (tx.mode !== 'readwrite') throw new Error('ReadOnlyError');
         return queue(tx, 'add', () => {
           const key = store.nextKey++;
+          const stored = structuredClone({ ...value, [store.keyPath]: key });
+          tx.staged.push(() => store.records.set(key, stored));
+          return key;
+        });
+      },
+      get(key) {
+        return queue(tx, 'get', () => {
+          const record = store.records.get(key);
+          return record === undefined ? undefined : structuredClone(record);
+        });
+      },
+      put(value) {
+        if (tx.mode !== 'readwrite') throw new Error('ReadOnlyError');
+        return queue(tx, 'put', () => {
+          const key = value[store.keyPath] ?? store.nextKey++;
           const stored = structuredClone({ ...value, [store.keyPath]: key });
           tx.staged.push(() => store.records.set(key, stored));
           return key;
@@ -374,9 +390,110 @@ test('an entry is listed on a fresh connection once addEntry resolves', async ()
   assert.deepEqual(await listEntries(), [saved]);
 });
 
+// Writes a record exactly as given, the way a build from before categories
+// left it on the device.
+async function putRaw(record) {
+  const db = await openLedger();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction('entries', 'readwrite');
+    tx.objectStore('entries').add(record);
+    tx.oncomplete = resolve;
+    tx.onerror = tx.onabort = () => reject(tx.error);
+  });
+}
+
+const storedRecords = () => [...fake.databases.get('rupee-ledger').stores.get('entries').records.values()];
+
+test('updateCategory sets the category in one strict write and leaves amount, note and date alone', async () => {
+  const saved = await addEntry({ amount: 120, note: 'chai', category: 'Food', createdAt: 1700000000000 });
+  const before = writes(fake).length;
+
+  const updated = await updateCategory(saved.id, 'Health');
+
+  assert.deepEqual(updated, { ...saved, category: 'Health' });
+  assert.deepEqual(storedRecords(), [{ ...saved, category: 'Health' }]);
+  const [tx] = writes(fake).slice(before);
+  assert.equal(writes(fake).length, before + 1);
+  assert.deepEqual(tx.options, { durability: 'strict' });
+  assert.deepEqual(tx.requests.map((request) => request.kind), ['get', 'put']);
+});
+
+test('updateCategory persists: a fresh connection reads the new category', async () => {
+  const saved = await addEntry({ amount: 50, note: 'auto', createdAt: 1 });
+  await updateCategory(saved.id, 'Transport');
+  await closeLedger();
+  assert.deepEqual(await listEntries(), [{ ...saved, category: 'Transport' }]);
+});
+
+test('updateCategory resolves only once the write has committed', async () => {
+  const saved = await addEntry({ amount: 50, note: 'auto', createdAt: 1 });
+  let release;
+  fake.commitGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let settled = false;
+  const pending = updateCategory(saved.id, 'Transport').then(() => {
+    settled = true;
+  });
+  await until(() => writes(fake).at(-1).requests.length === 2);
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(settled, false);
+  assert.equal(storedRecords()[0].category, '');
+  release();
+  await pending;
+  assert.equal(storedRecords()[0].category, 'Transport');
+});
+
+test('updateCategory accepts every name in CATEGORIES', async () => {
+  const saved = await addEntry({ amount: 1, note: 'x', createdAt: 1 });
+  for (const category of CATEGORIES) {
+    assert.equal((await updateCategory(saved.id, category)).category, category);
+  }
+});
+
+test('updateCategory rejects a name outside CATEGORIES and writes nothing', async () => {
+  const saved = await addEntry({ amount: 120, note: 'chai', category: 'Food', createdAt: 1 });
+  const before = writes(fake).length;
+  for (const bad of ['food', 'Travel', '', ' Food', undefined, null, 3]) {
+    await assert.rejects(updateCategory(saved.id, bad), /Category must be one of/);
+  }
+  assert.equal(writes(fake).length, before);
+  assert.deepEqual(storedRecords(), [saved]);
+});
+
+test('updateCategory rejects an id with no entry and stores nothing', async () => {
+  await addEntry({ amount: 120, note: 'chai', createdAt: 1 });
+  const before = structuredClone(storedRecords());
+  await assert.rejects(updateCategory(99, 'Food'), /No ledger entry has id 99/);
+  assert.deepEqual(storedRecords(), before);
+});
+
+test('listEntries gives an entry saved without a category field categorise(note), storing nothing', async () => {
+  await putRaw({ amount: 12000, note: 'masala chai', createdAt: 1 });
+  await putRaw({ amount: 5000, note: 'Auto to office', createdAt: 2 });
+  await putRaw({ amount: 700, note: 'misc', createdAt: 3 });
+  await putRaw({ amount: 300, createdAt: 4 });
+  await addEntry({ amount: 1, note: 'chai', category: 'snacks', createdAt: 5 });
+  const before = structuredClone(storedRecords());
+
+  const listed = await listEntries();
+  assert.deepEqual(listed.map(({ id, amount, note, category, createdAt }) => [id, amount, note, category, createdAt]), [
+    [1, 12000, 'masala chai', 'Food', 1],
+    [2, 5000, 'Auto to office', 'Transport', 2],
+    [3, 700, 'misc', 'Other', 3],
+    [4, 300, undefined, 'Other', 4],
+    [5, 100, 'chai', 'snacks', 5],
+  ]);
+  assert.deepEqual(storedRecords(), before, 'reading migrates nothing');
+  assert.equal(fake.databases.get('rupee-ledger').version, 1, 'no schema upgrade');
+});
+
 test('the module is dependency-free and makes no network calls', async () => {
   const source = await readFile(new URL('./store.js', import.meta.url), 'utf8');
-  assert.doesNotMatch(source, /^\s*import\b/m);
+  // The only import is the pure, in-repo categoriser.
+  const imports = [...source.matchAll(/^\s*import\b.*?from\s*'([^']+)'/gm)].map((match) => match[1]);
+  assert.deepEqual(imports, ['../categorise.js']);
+  assert.equal(source.match(/^\s*import\b/gm).length, 1);
   assert.doesNotMatch(source, /\bimport\s*\(/);
   assert.doesNotMatch(source, /\b(?:require|fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon|importScripts)\s*\(/);
   assert.doesNotMatch(source, /\bhttps?:\/\//);

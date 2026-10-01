@@ -81,7 +81,9 @@ test('the quick-entry box writes through the versioned ledger add, and loadEntri
   assert.equal(ledger.add, add, 'no wrapper between the box and src/ledger.js');
   const saved = await ledger.add({ amountPaise: 4550, note: 'auto', createdAt: at });
   assert.deepEqual(fromRecord(saved), { id: 1, amountPaise: 4550, note: 'auto', timestamp: at });
-  assert.deepEqual(storedRecords(), [{ id: 1, schemaVersion: 1, amountPaise: 4550, note: 'auto', createdAt: at }]);
+  assert.deepEqual(storedRecords(), [
+    { id: 1, schemaVersion: 1, amountPaise: 4550, note: 'auto', category: 'Transport', createdAt: at },
+  ]);
 
   await ledger.add({ amountPaise: 12000, note: 'chai', createdAt: at + 1 });
   const loaded = await loadEntries(query(''), { now: new Date(at) });
@@ -142,6 +144,52 @@ test('end to end: from an empty ledger, 120 chai then 80 auto shows ₹200 and �
   assert.equal(shown(reopened.view.innerHTML, 'today'), '₹200');
   assert.equal(shown(reopened.view.innerHTML, 'month'), '₹200');
   assert.match(reopened.view.innerHTML, /2 spends/);
+});
+
+test('end to end: Enter on 120 chai and 50 auto stores Food and Transport in one strict write each', async () => {
+  const screen = fakeScreen();
+  await mountToday({ main: screen.main, query: query('') });
+  const before = fake.transactions.length;
+
+  screen.type('120 chai');
+  screen.type('50 auto');
+  await settle();
+
+  assert.deepEqual(storedRecords().map(({ amountPaise, note, category }) => [amountPaise, note, category]),
+    [[12000, 'chai', 'Food'], [5000, 'auto', 'Transport']]);
+  const saves = fake.transactions.slice(before).filter((tx) => tx.mode === 'readwrite');
+  assert.equal(saves.length, 2, 'one write per Enter, none afterwards for the category');
+  for (const tx of saves) {
+    assert.deepEqual(tx.requests.map((request) => request.kind), ['add']);
+    assert.deepEqual(tx.options, { durability: 'strict' });
+  }
+});
+
+test('today and month totals are the same whether entries carry a category or predate it', async () => {
+  const at = new Date(2026, 8, 30, 9, 0).getTime();
+  const lines = [[12000, 'chai', at], [8000, 'auto', at + 1], [4550, 'rent', new Date(2026, 8, 2, 9).getTime()]];
+  const reloadedTotals = async () => {
+    await closeLedger();
+    const loaded = await loadEntries(query(''), { now: new Date(at) });
+    return totals(loaded, new Date(at));
+  };
+
+  for (const [amountPaise, note, createdAt] of lines) await add({ amountPaise, note, createdAt });
+  const categorised = await reloadedTotals();
+
+  // The same entries again, as a build from before categories stored them.
+  await closeLedger();
+  fake = createFakeIndexedDB();
+  globalThis.indexedDB = fake;
+  for (const [amountPaise, note, createdAt] of lines) {
+    await add({ amountPaise, note, createdAt });
+    delete storedRecords().at(-1).category;
+  }
+  assert.ok(storedRecords().every((record) => !('category' in record)));
+  const legacy = await reloadedTotals();
+
+  assert.deepEqual(categorised, { today: 20000, month: 24550 });
+  assert.deepEqual(legacy, categorised);
 });
 
 test('without IndexedDB the load and the save reject, so the screen can say so', async () => {

@@ -2,8 +2,9 @@
 // in-memory stand-in covering the parts of IndexedDB's contract the module
 // relies on: databases outlive connections, requests and transaction events
 // fire asynchronously, writes land only when the transaction commits and
-// `oncomplete` fires after that, and an index `getAll` honours an
-// `IDBKeyRange` and skips records whose key is not a valid number.
+// `oncomplete` fires after that, `get` and `put` work by primary key, and an
+// index `getAll` honours an `IDBKeyRange` and skips records whose key is not
+// a valid number.
 export function createFakeIndexedDB() {
   const databases = new Map();
   const fake = { databases, transactions: [], commitGate: null, failNext: null, open };
@@ -83,6 +84,21 @@ export function createFakeIndexedDB() {
         if (tx.mode !== 'readwrite') throw new Error('ReadOnlyError');
         return queue(tx, 'add', () => {
           const key = store.nextKey++;
+          const stored = structuredClone({ ...value, [store.keyPath]: key });
+          tx.staged.push(() => store.records.set(key, stored));
+          return key;
+        });
+      },
+      get(key) {
+        return queue(tx, 'get', () => {
+          const record = store.records.get(key);
+          return record === undefined ? undefined : structuredClone(record);
+        });
+      },
+      put(value) {
+        if (tx.mode !== 'readwrite') throw new Error('ReadOnlyError');
+        return queue(tx, 'put', () => {
+          const key = value[store.keyPath] ?? store.nextKey++;
           const stored = structuredClone({ ...value, [store.keyPath]: key });
           tx.staged.push(() => store.records.set(key, stored));
           return key;
