@@ -136,6 +136,30 @@ test('a backup written by serializeBackup from stored records imports, and a re-
   assert.deepEqual(storeTotals(), before);
 });
 
+/* Test #91: a build that read every entry's `amount` refused phone A's file
+   with "Backup entry 1 has a non-numeric amount: undefined", since a record
+   from add() holds `amountPaise` and no `amount` at all. */
+test('an exported record with amountPaise and no amount imports, never "non-numeric amount: undefined"', async () => {
+  await add({ amountPaise: 12000, note: 'chai', createdAt: new Date(2026, 8, 30, 9).getTime() });
+  const text = serializeBackup(await store.listEntries(), now);
+  const [exported] = JSON.parse(text).entries;
+  assert.equal('amount' in exported, false);
+
+  await store.closeLedger();
+  fake = createFakeIndexedDB();
+  globalThis.indexedDB = fake;
+
+  assert.deepEqual(await importEntries(store, parseBackup(text).entries), { added: 1, skipped: 0 });
+  assert.deepEqual(storedRecords().map((r) => [r.schemaVersion, r.amountPaise, r.note]), [[1, 12000, 'chai']]);
+
+  const noAmount = backupText([{ schemaVersion: 1, note: 'chai', createdAt: 1 }]);
+  assert.throws(() => parseBackup(noAmount), (error) => {
+    assert.match(error.message, /entry 1 has no amount/);
+    assert.doesNotMatch(error.message, /undefined/);
+    return true;
+  });
+});
+
 test('stored-shape entries: createdAt may be a number or an ISO string; bad amounts are refused', async () => {
   const v = (entry) => backupText([{ schemaVersion: 1, note: 'x', createdAt: 1, ...entry }]);
   const iso = parseBackup(v({ amountPaise: 500, createdAt: at(3, 9) })).entries;

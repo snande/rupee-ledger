@@ -75,3 +75,58 @@ test('the entry point starts offline support', async () => {
   assert.match(app, /import \{ startOffline \} from '\.\/sw-register\.js';/);
   assert.match(app, /^startOffline\(\);$/m);
 });
+
+/* A service worker container that can fire controllerchange, as a page
+   already controlled (`controller`) or loaded before any worker. */
+function updatingNavigator({ controller = {}, update = async () => {} } = {}) {
+  const listeners = [];
+  const calls = { update: 0 };
+  return {
+    calls,
+    change: () => listeners.forEach((listener) => listener()),
+    serviceWorker: {
+      controller,
+      register: async () => ({ update: () => { calls.update += 1; return update(); } }),
+      addEventListener: (type, listener) => {
+        if (type === 'controllerchange') listeners.push(listener);
+      },
+    },
+  };
+}
+
+test('reloads once onto the new files when a new worker takes over a controlled page', async () => {
+  const nav = updatingNavigator();
+  let reloads = 0;
+  assert.equal((await startOffline(nav, () => { reloads += 1; })).registered, true);
+  assert.equal(reloads, 0);
+  nav.change();
+  assert.equal(reloads, 1);
+  nav.change();
+  assert.equal(reloads, 1);
+});
+
+test('a first install, with no worker yet, does not reload', async () => {
+  const nav = updatingNavigator({ controller: null });
+  let reloads = 0;
+  await startOffline(nav, () => { reloads += 1; });
+  nav.change();
+  assert.equal(reloads, 0);
+});
+
+test('checks for a new sw.js at startup, and a failed check neither throws nor rejects', async () => {
+  const nav = updatingNavigator();
+  await startOffline(nav, () => {});
+  assert.equal(nav.calls.update, 1);
+
+  const offline = updatingNavigator({ update: async () => { throw new Error('offline'); } });
+  assert.equal((await startOffline(offline, () => {})).registered, true);
+
+  const throwing = updatingNavigator({ update: () => { throw new Error('sync failure'); } });
+  assert.equal((await startOffline(throwing, () => {})).registered, true);
+});
+
+test('a reload that throws is swallowed', async () => {
+  const nav = updatingNavigator();
+  await startOffline(nav, () => { throw new Error('cannot reload'); });
+  assert.doesNotThrow(() => nav.change());
+});

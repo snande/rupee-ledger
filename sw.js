@@ -34,9 +34,9 @@
  * changes without it. Bump VERSION and paste the new digest together.
  */
 
-const VERSION = 'v11';
+const VERSION = 'v12';
 // sha-256 of the precached files' contents; see the note above and sw.test.js.
-const ASSETS_DIGEST = 'c94b2b35513e76a75c401a61bec1127358bc44cbb3065846d716a46a63947806';
+const ASSETS_DIGEST = '6d053e305aa9578de64890aafd1fa26b2100ef9c20cb769f74f55eb81e4912b7';
 const CACHE = 'rupee-ledger-' + VERSION;
 const SHELL = './index.html';
 
