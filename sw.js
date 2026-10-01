@@ -15,7 +15,10 @@
  *   (past the browser's HTTP cache, so no stale copy is stored), then takes
  *   over without waiting for old tabs.
  * - activate deletes every cache that is not a set of this VERSION, and
- *   claims open pages.
+ *   claims open pages. When it deleted a cache of an earlier VERSION (a
+ *   phone upgrading from an older worker), it then reloads every open app
+ *   window with WindowClient.navigate, onto the new files. A first install
+ *   has no such cache and reloads nothing.
  * - a navigation (opening the app) first tries to write a new set from the
  *   network, with cache: 'no-cache' so the server revalidates every file.
  *   If that finishes within NETWORK_TIMEOUT_MS, the page and all of its
@@ -35,7 +38,10 @@
  * installed phone kept running the files of the cache it had until sw.js
  * itself changed, so in test #91 phone B went on refusing every backup with
  * "Backup entry 1 has a non-numeric amount: undefined", a message the
- * deployed src/backup-import.js can no longer produce.
+ * deployed src/backup-import.js can no longer produce. A page such a worker
+ * loaded keeps its old modules, and its old js/sw-register.js has no hook to
+ * reload when this worker takes over, so an installed app resumed from
+ * memory went on refusing backups; that is why activate reloads it.
  *
  * The ledger itself lives in IndexedDB, which this worker never touches.
  * Hand-written on purpose: no build step and nothing imported from a network.
@@ -55,7 +61,9 @@
 const VERSION = 'v13';
 // sha-256 of the precached files' contents; see the note above and sw.test.js.
 const ASSETS_DIGEST = '241298e9027b7d67d33c9691fa5ed03cc3a697c45b02a959ab1b157b94ed9e3b';
-const PREFIX = 'rupee-ledger-' + VERSION + '-';
+// Every cache this app has ever named starts with this, whatever its VERSION.
+const APP_CACHES = 'rupee-ledger-';
+const PREFIX = APP_CACHES + VERSION + '-';
 const SHELL = './index.html';
 // How long opening the app waits for a new set before using the newest one.
 const NETWORK_TIMEOUT_MS = 3000;
@@ -116,12 +124,34 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((names) => Promise.all(names.filter((name) => !name.startsWith(PREFIX)).map((name) => caches.delete(name))))
-      .then(() => self.clients.claim()),
+    caches.keys().then(async (names) => {
+      const old = names.filter((name) => !name.startsWith(PREFIX));
+      await Promise.all(old.map((name) => caches.delete(name)));
+      await self.clients.claim();
+      if (old.some((name) => name.startsWith(APP_CACHES))) await reloadWindows();
+    }),
   );
 });
+
+// Reopens every app window this worker now controls, so a page an earlier
+// worker loaded runs the deployed files. Best effort: a window that cannot
+// be navigated keeps running, and the next open uses the new files.
+async function reloadWindows() {
+  try {
+    const windows = await self.clients.matchAll({ type: 'window' });
+    await Promise.all(
+      windows.map(async (client) => {
+        try {
+          if (typeof client.navigate === 'function') await client.navigate(client.url);
+        } catch {
+          // Left as it is; see above.
+        }
+      }),
+    );
+  } catch {
+    // No windows to reach; nothing to reload.
+  }
+}
 
 self.addEventListener('fetch', (event) => {
   const request = event.request;

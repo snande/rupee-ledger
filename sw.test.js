@@ -24,12 +24,12 @@ const PRECACHE_LIMIT_BYTES = 200_000;
  * answer waits for. `timers` replaces setTimeout and clearTimeout.
  * cache.addAll stores all of its responses or none, as browsers do.
  */
-function loadWorker({ caches: existing = {}, offline = false, server = {}, timers = {} } = {}) {
+function loadWorker({ caches: existing = {}, offline = false, server = {}, timers = {}, windows = [] } = {}) {
   const handlers = {};
   const network = [];
   const cacheModes = [];
   const stores = new Map(Object.entries(existing).map(([name, entries]) => [name, new Map(entries)]));
-  const state = { skipWaiting: 0, claim: 0 };
+  const state = { skipWaiting: 0, claim: 0, navigated: [] };
   const absolute = (input) => new URL(typeof input === 'string' ? input : input.url, `${SCOPE}sw.js`).href;
   const withoutSearch = (url) => {
     const parsed = new URL(url);
@@ -106,6 +106,18 @@ function loadWorker({ caches: existing = {}, offline = false, server = {}, timer
       claim: async () => {
         state.claim += 1;
       },
+      /* The open app windows: `windows` lists `{ url, fails }`, and each
+         navigate() is recorded in state.navigated (or rejects when `fails`). */
+      matchAll: async ({ type } = {}) =>
+        type === 'window'
+          ? windows.map(({ url, fails }) => ({
+              url,
+              navigate: async (to) => {
+                state.navigated.push(to);
+                if (fails) throw new TypeError('Cannot navigate');
+              },
+            }))
+          : [],
     },
   };
   self.caches = caches;
@@ -383,6 +395,47 @@ test('activate deletes every cache that is not a set of this version, and claims
   await worker.dispatch('activate');
   assert.deepEqual([...worker.stores.keys()], worker.sets());
   assert.equal(worker.sets().length, 1);
+  assert.equal(worker.state.claim, 1);
+});
+
+/* Test #91 again: a page the old cache-first worker loaded keeps its old
+   modules, and its old sw-register.js never reloads it, so the new worker
+   reloads every open window itself when it replaces an older version. */
+test('activate over an older version reloads every open app window onto the new files', async () => {
+  const worker = loadWorker({
+    caches: { 'rupee-ledger-v12': [] },
+    windows: [{ url: `${SCOPE}#/backup` }, { url: `${SCOPE}#/today` }],
+  });
+  await worker.dispatch('install');
+  await worker.dispatch('activate');
+  assert.deepEqual(worker.state.navigated, [`${SCOPE}#/backup`, `${SCOPE}#/today`]);
+  assert.equal(worker.state.claim, 1);
+});
+
+test('a first install, or a worker over this same version, reloads no window', async () => {
+  for (const caches of [{}, { 'some-other-cache': [] }]) {
+    const worker = loadWorker({ caches, windows: [{ url: `${SCOPE}#/today` }] });
+    await worker.dispatch('install');
+    await worker.dispatch('activate');
+    assert.deepEqual(worker.state.navigated, []);
+  }
+  const worker = loadWorker({ windows: [{ url: `${SCOPE}#/today` }] });
+  await worker.dispatch('install');
+  await worker.dispatch('install');
+  await worker.dispatch('activate');
+  assert.equal(worker.sets().length, 2, 'sets of this version are kept');
+  assert.deepEqual(worker.state.navigated, []);
+});
+
+test('a window that cannot be navigated never fails activate', async () => {
+  const worker = loadWorker({
+    caches: { 'rupee-ledger-v11': [] },
+    windows: [{ url: `${SCOPE}#/backup`, fails: true }, { url: `${SCOPE}#/month` }],
+  });
+  await worker.dispatch('install');
+  await worker.dispatch('activate');
+  assert.deepEqual(worker.state.navigated, [`${SCOPE}#/backup`, `${SCOPE}#/month`]);
+  assert.deepEqual([...worker.stores.keys()], worker.sets());
   assert.equal(worker.state.claim, 1);
 });
 
