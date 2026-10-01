@@ -216,6 +216,13 @@ export function renderMonth(state = {}) {
  * draws it. A failed load shows Try again; a load that a route change has
  * overtaken writes nothing. Focus goes to <main>. Returns the load's promise,
  * which never rejects.
+ *
+ * Nothing is kept between mounts: the router mounts the screen each time its
+ * tab opens, and each mount reads the ledger afresh. So spends added
+ * elsewhere, by the quick-entry box or by Import backup on the Backup screen
+ * (js/screens/backup.js), are in the total the next time the Month tab
+ * opens, with no page reload; a re-import that adds nothing leaves it as it
+ * was.
  */
 export function mountMonth({
   main,

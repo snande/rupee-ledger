@@ -506,6 +506,31 @@ label {
   display: none;
 }
 
+.today-import-link {
+  color: var(--color-ink);
+  font-size: var(--text-2);
+}
+
+/* Backup screen: the Import backup picker in a card, with the line under it
+   that reports the added and skipped counts, or in sindoor (.hint-error)
+   why a file was refused. Every value is a token from css/tokens.css. */
+.backup-import h2 {
+  margin: 0 0 var(--space-3);
+}
+
+.backup-field {
+  margin-bottom: var(--space-2);
+}
+
+.backup-status {
+  margin-top: var(--space-3);
+  font-weight: var(--weight-strong);
+}
+
+.backup-status[hidden] {
+  display: none;
+}
+
 .today-entry-row button {
   flex: none;
   min-width: var(--control-min-height);

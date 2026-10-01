@@ -16,6 +16,7 @@ import { mountToday, renderToday } from './screens/today.js';
 import { mountCompare, renderCompare } from './screens/compare.js';
 import { mountMonth, renderMonth } from './screens/month.js';
 import { mountSearch, renderSearch } from './screens/search.js';
+import { mountBackup, renderBackup } from './screens/backup.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
 import { closeLedger } from '../src/ledger.js';
 import { createFakeIndexedDB, FakeIDBKeyRange } from '../src/ledger/fake-indexeddb.js';
@@ -123,6 +124,35 @@ test('the Search tab in index.html links to the search route', async () => {
   const { readFile } = await import('node:fs/promises');
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   assert.match(html, /<a class="tab" href="#\/search" data-route="search">Search<\/a>/);
+});
+
+test('the routes table maps backup to the Backup screen and its mount', () => {
+  assert.equal(routes.backup, renderBackup);
+  assert.equal(mounts.backup, mountBackup);
+  for (const hash of ['#/backup', '#/backup/', '#backup']) {
+    assert.deepEqual(resolveRoute(hash), { name: 'backup', render: renderBackup }, hash);
+  }
+});
+
+test('renderRoute puts the Import backup file picker into main for #/backup and marks its tab', () => {
+  const main = fakeElement();
+  const today = fakeElement({ 'data-route': 'today' });
+  const backup = fakeElement({ 'data-route': 'backup' });
+  const route = renderRoute({ main, links: [today, backup], hash: '#/backup', mountTable: noMounts });
+  assert.equal(route.name, 'backup');
+  assert.match(main.innerHTML, /<input type="file" id="backup-file" accept="\.json,application\/json"[^>]*data-import-file>/);
+  assert.equal(today.getAttribute('aria-current'), null);
+  assert.equal(backup.getAttribute('aria-current'), 'page');
+});
+
+test('the Backup tab in index.html links to the backup route', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /<a class="tab" href="#\/backup" data-route="backup">Backup<\/a>/);
+});
+
+test('the Today screen links to the Backup screen beside Export backup', () => {
+  assert.match(renderToday(), /<section class="today-backup"[^]*<a class="today-import-link" href="#\/backup">Import backup<\/a>[^]*<\/section>/);
 });
 
 test('the routes table maps month to the Month screen and its mount', () => {
