@@ -209,6 +209,13 @@ test('the backup export modules are precached, so Export backup works offline', 
   }
 });
 
+test('the Backup screen and the import module are precached, so Import backup opens offline', () => {
+  const names = listed(loadWorker().ASSETS);
+  for (const path of ['js/screens/backup.js', 'src/backup-import.js']) {
+    assert.ok(names.includes(path), `${path} is not precached`);
+  }
+});
+
 test('every precached file exists, so install cannot fail on a 404', () => {
   for (const path of listed(loadWorker().ASSETS)) {
     assert.ok(exists(path), `sw.js precaches ${path}, which does not exist`);

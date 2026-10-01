@@ -35,6 +35,7 @@ export const ERROR_MESSAGE = 'Today’s spends did not open.';
 export const ENTRY_HINT = 'Amount first, then what it was for';
 export const EXPORT_LABEL = 'Export backup';
 export const EXPORT_ERROR = 'The backup was not made: your spends could not be read. Nothing was downloaded.';
+export const IMPORT_LINK_LABEL = 'Import backup';
 
 const SKELETON_ROWS = 3;
 
@@ -219,10 +220,12 @@ export function renderTodayView(state = {}) {
 
 /* The Export backup control: a quiet secondary button below the spends,
    outside the view that re-renders and apart from the entry box, and the
-   line that says when a backup could not be made. */
+   line that says when a backup could not be made. Beside it, the Import
+   backup link opens the #/backup screen, which restores a backup file. */
 export function backupView() {
   return '<section class="today-backup" aria-label="Backup">' +
     '<button type="button" class="button-secondary today-export" data-export-backup>' + EXPORT_LABEL + '</button>' +
+    '<a class="button-link button-secondary today-import" href="#/backup" data-import-backup>' + IMPORT_LINK_LABEL + '</a>' +
     '<p class="hint hint-error today-export-status" role="alert" data-export-status hidden></p>' +
   '</section>';
 }

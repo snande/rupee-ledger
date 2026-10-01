@@ -493,11 +493,55 @@ label {
   min-width: var(--control-min-height);
 }
 
+.today-import {
+  min-width: var(--control-min-height);
+}
+
 .today-export-status {
   font-weight: var(--weight-strong);
 }
 
 .today-export-status[hidden] {
+  display: none;
+}
+
+/* A link that reads as a button, such as Import backup: the button's size,
+   border and type, with no underline. Pair it with .button-secondary for
+   the card fill. */
+.button-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-min-height);
+  padding: var(--space-2) var(--space-5);
+  border: var(--border-hairline) solid var(--color-muted);
+  border-radius: var(--radius-control);
+  color: var(--color-ink);
+  font: var(--weight-strong) var(--text-3) / var(--leading-tight) var(--font-ui);
+  text-decoration: none;
+}
+
+/* Import backup: the #/backup screen's file picker in a card, the line
+   saying what the import added, and the error line in sindoor. */
+.backup-title {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-3);
+}
+
+.backup-hint {
+  margin-bottom: var(--space-4);
+}
+
+.backup-result {
+  margin: 0;
+  font-weight: var(--weight-strong);
+}
+
+.backup-error {
+  font-weight: var(--weight-strong);
+}
+
+.backup-result[hidden],
+.backup-error[hidden] {
   display: none;
 }
 

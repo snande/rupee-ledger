@@ -16,6 +16,7 @@ import { mountToday, renderToday } from './screens/today.js';
 import { mountCompare, renderCompare } from './screens/compare.js';
 import { mountMonth, renderMonth } from './screens/month.js';
 import { mountSearch, renderSearch } from './screens/search.js';
+import { mountBackup, renderBackup } from './screens/backup.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
 
 /* Screens under test here render without their mount, so no data loads. */
@@ -110,6 +111,19 @@ test('the Search tab in index.html links to the search route', async () => {
   const { readFile } = await import('node:fs/promises');
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   assert.match(html, /<a class="tab" href="#\/search" data-route="search">Search<\/a>/);
+});
+
+test('the routes table maps backup to the Backup screen and its mount', () => {
+  assert.equal(routes.backup, renderBackup);
+  assert.equal(mounts.backup, mountBackup);
+  assert.deepEqual(resolveRoute('#/backup'), { name: 'backup', render: renderBackup });
+});
+
+test('renderRoute puts the Backup screen into main for #/backup, with its file input', () => {
+  const main = fakeElement();
+  const route = renderRoute({ main, hash: '#/backup', mountTable: noMounts });
+  assert.equal(route.name, 'backup');
+  assert.match(main.innerHTML, /<input type="file"[^>]*accept="\.json,application\/json"/);
 });
 
 test('the routes table maps month to the Month screen and its mount', () => {

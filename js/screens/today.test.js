@@ -1006,6 +1006,14 @@ test('the Today screen shows an Export backup button outside the re-rendered vie
   assert.doesNotMatch(html.slice(html.indexOf('data-today-form')), /data-export/);
 });
 
+test('the Today screen links to the Import backup screen next to Export backup', () => {
+  const html = renderToday({ status: 'filled', entries: sample });
+  assert.match(html, /<a class="button-link button-secondary today-import" href="#\/backup" data-import-backup>Import backup<\/a>/);
+  assert.ok(html.indexOf('data-export-backup') < html.indexOf('data-import-backup'));
+  assert.ok(html.indexOf('data-import-backup') < html.indexOf('data-today-form'), 'the entry box stays last');
+  assert.doesNotMatch(renderTodayView({ status: 'filled', entries: sample }), /data-import-backup/);
+});
+
 test('Export backup runs the backup once per tap and leaves the entry box alone', async () => {
   const screen = fakeScreenWithExport();
   let calls = 0;
@@ -1081,7 +1089,7 @@ test('the Export backup control is styled only from tokens in css/tokens.css', a
     return match[1];
   };
   const used = new Set();
-  for (const selector of ['.today-backup', '.today-export', '.today-export-status', '.button-secondary', '.hint-error']) {
+  for (const selector of ['.today-backup', '.today-export', '.today-export-status', '.button-link', '.button-secondary', '.hint-error']) {
     const body = rule(selector);
     assert.doesNotMatch(body, /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\(|\d(?:px|rem|em|pt)\b/i, selector + ' holds a raw value');
     for (const [, name] of body.matchAll(/var\((--[\w-]+)\)/g)) used.add(name);
