@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { categoryOf, fromRecord, isDemo, ledgerFor, loadEntries, loadMonthEntries } from './ledger.js';
+import { categoryOf, fromRecord, isDemo, ledgerFor, loadAllEntries, loadEntries, loadMonthEntries } from './ledger.js';
 import { mountToday } from '../screens/today.js';
 import { add, closeLedger } from '../../src/ledger.js';
 import { addEntry, updateCategory } from '../../src/ledger/store.js';
@@ -279,4 +279,26 @@ test('end to end: tapping a chip then a category stores it, and a reload shows i
   const reopened = fakeScreen();
   await mountToday({ main: reopened.main, query: query('') });
   assert.match(reopened.view.innerHTML, /aria-label="Category: Health\. Change category">Health</);
+});
+
+test('loadAllEntries reads every month from the on-device store, amounts in paise', async () => {
+  await add({ amountPaise: 2000, note: 'chai', createdAt: new Date(2026, 6, 3, 9).getTime() });
+  await add({ amountPaise: 50000, note: 'rent', createdAt: new Date(2026, 7, 1, 9).getTime() });
+  await addEntry({ amount: 15, note: 'masala chai', createdAt: new Date(2026, 8, 2, 9).getTime() });
+
+  const entries = await loadAllEntries();
+  assert.deepEqual(entries.map(({ note, amountPaise }) => ({ note, amountPaise })), [
+    { note: 'chai', amountPaise: 2000 },
+    { note: 'rent', amountPaise: 50000 },
+    { note: 'masala chai', amountPaise: 1500 },
+  ]);
+  assert.equal(entries[0].timestamp, new Date(2026, 6, 3, 9).getTime());
+});
+
+test('loadAllEntries maps whatever list resolves and passes its rejection on', async () => {
+  const entries = await loadAllEntries({
+    list: async () => [{ id: 4, amountPaise: 300, note: 'pen', category: 'Shopping', createdAt: 7 }],
+  });
+  assert.deepEqual(entries, [{ id: 4, amountPaise: 300, note: 'pen', category: 'Shopping', timestamp: 7 }]);
+  await assert.rejects(loadAllEntries({ list: async () => { throw new Error('no ledger'); } }), /no ledger/);
 });

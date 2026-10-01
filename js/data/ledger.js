@@ -17,7 +17,7 @@
 
 import { categorise, CATEGORIES } from '../../src/categorise.js';
 import * as ledger from '../../src/ledger.js';
-import { updateCategory } from '../../src/ledger/store.js';
+import { listEntries, updateCategory } from '../../src/ledger/store.js';
 import { currentQuery, requestedState, loadEntries as loadStubEntries } from './stub.js';
 
 /* True when the query asks for a stub state rather than the real ledger. */
@@ -67,6 +67,22 @@ export async function loadMonthEntries(month, { list = ledger.listByMonth } = {}
   return records.map((record) => ({
     id: record.id,
     amountPaise: record.amountPaise,
+    note: record.note ?? '',
+    category: record.category,
+    timestamp: record.createdAt,
+  }));
+}
+
+/* Every stored entry from every month, for the Search screen, read through
+   src/ledger/store.js's listEntries, so they come from the on-device store
+   and nothing leaves the phone. Records written by src/ledger.js carry
+   `amountPaise`; ones written by the store's addEntry carry `amount`, also
+   in integer paise. */
+export async function loadAllEntries({ list = listEntries } = {}) {
+  const records = await list();
+  return records.map((record) => ({
+    id: record.id,
+    amountPaise: Number.isSafeInteger(record.amountPaise) ? record.amountPaise : record.amount,
     note: record.note ?? '',
     category: record.category,
     timestamp: record.createdAt,

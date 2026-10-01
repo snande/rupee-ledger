@@ -586,6 +586,52 @@ label {
   font-weight: var(--weight-strong);
 }
 
+/* ---------- Search screen ---------- */
+
+.search,
+.search-view {
+  min-width: 0;
+}
+
+.search-form {
+  margin-bottom: var(--space-4);
+}
+
+.search-field {
+  margin: 0;
+}
+
+.search-total {
+  margin-bottom: var(--space-4);
+}
+
+.search-count {
+  font-weight: var(--weight-regular);
+}
+
+/* Date over note on the left, amount right; the note wraps, the amount
+   never does. */
+.search-detail {
+  display: grid;
+  flex: 1 1 auto;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.search-date {
+  color: var(--color-muted);
+  font-size: var(--text-1);
+}
+
+.search-none {
+  margin: 0;
+}
+
+.search-error-message {
+  margin-top: 0;
+  font-weight: var(--weight-strong);
+}
+
 /* ---------- Month screen ---------- */
 
 .month,

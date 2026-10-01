@@ -8,16 +8,18 @@
 import { renderToday, mountToday } from './screens/today.js';
 import { renderCompare, mountCompare } from './screens/compare.js';
 import { renderMonth, mountMonth } from './screens/month.js';
+import { renderSearch, mountSearch } from './screens/search.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
 
 export const DEFAULT_ROUTE = 'today';
 
-/* Route name → function returning the screen's markup. Later tabs (search,
-   settings) add an entry here and a tab in index.html. */
+/* Route name → function returning the screen's markup. Later tabs
+   (settings) add an entry here and a tab in index.html. */
 export const routes = {
   today: renderToday,
   month: renderMonth,
   compare: renderCompare,
+  search: renderSearch,
 };
 
 /* Route name → function run once the screen's markup is in <main>, for
@@ -29,6 +31,7 @@ export const mounts = {
   today: mountToday,
   month: mountMonth,
   compare: mountCompare,
+  search: mountSearch,
 };
 
 /* A hash may carry a query after the path, as in '#/today?state=empty'. */
