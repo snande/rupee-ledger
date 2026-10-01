@@ -13,6 +13,7 @@ import {
   startRouter,
 } from './router.js';
 import { mountToday, renderToday } from './screens/today.js';
+import { mountCompare, renderCompare } from './screens/compare.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
 
 /* Screens under test here render without their mount, so no data loads. */
@@ -55,6 +56,32 @@ test('the routes table maps today to the Today screen', () => {
   assert.equal(DEFAULT_ROUTE, 'today');
   assert.equal(routes.today, renderToday);
   assert.equal(mounts.today, mountToday);
+});
+
+test('the routes table maps compare to the Compare screen and its mount', () => {
+  assert.equal(routes.compare, renderCompare);
+  assert.equal(mounts.compare, mountCompare);
+  for (const hash of ['#/compare', '#/compare/', '#compare']) {
+    assert.deepEqual(resolveRoute(hash), { name: 'compare', render: renderCompare }, hash);
+  }
+});
+
+test('renderRoute puts the Compare screen into main for #/compare and marks its tab', () => {
+  const main = fakeElement();
+  const today = fakeElement({ 'data-route': 'today' });
+  const compare = fakeElement({ 'data-route': 'compare' });
+  const route = renderRoute({ main, links: [today, compare], hash: '#/compare', mountTable: noMounts });
+  assert.equal(route.name, 'compare');
+  assert.match(main.innerHTML, /<div class="compare"/);
+  assert.equal((main.innerHTML.match(/<select /g) ?? []).length, 2);
+  assert.equal(compare.getAttribute('aria-current'), 'page');
+  assert.equal(today.getAttribute('aria-current'), null);
+});
+
+test('the Compare tab in index.html links to the compare route', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /<a class="tab" href="#\/compare" data-route="compare">Compare<\/a>/);
 });
 
 test('a query after the path keeps the route and is parsed apart', () => {

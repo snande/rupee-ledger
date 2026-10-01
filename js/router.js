@@ -6,6 +6,7 @@
  */
 
 import { renderToday, mountToday } from './screens/today.js';
+import { renderCompare, mountCompare } from './screens/compare.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
 
 export const DEFAULT_ROUTE = 'today';
@@ -14,6 +15,7 @@ export const DEFAULT_ROUTE = 'today';
    view, search, settings) add an entry here and a tab in index.html. */
 export const routes = {
   today: renderToday,
+  compare: renderCompare,
 };
 
 /* Route name → function run once the screen's markup is in <main>, for
@@ -23,6 +25,7 @@ export const routes = {
    overwrite a newer screen. A mount that runs owns focus for its screen. */
 export const mounts = {
   today: mountToday,
+  compare: mountCompare,
 };
 
 /* A hash may carry a query after the path, as in '#/today?state=empty'. */
