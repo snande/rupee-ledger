@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { categoryOf, fromRecord, isDemo, ledgerFor, loadEntries } from './ledger.js';
+import { categoryOf, fromRecord, isDemo, ledgerFor, loadEntries, loadMonthEntries } from './ledger.js';
 import { mountToday } from '../screens/today.js';
 import { add, closeLedger } from '../../src/ledger.js';
 import { addEntry, updateCategory } from '../../src/ledger/store.js';
@@ -107,6 +107,38 @@ test('a record with an unknown or missing schema version makes the load report i
   await mountToday({ main: screen.main, query: query('') });
   assert.match(screen.view.innerHTML, /today-error/);
   assert.equal(shown(screen.view.innerHTML, 'today'), '—', 'no misread sum');
+});
+
+test('loadMonthEntries reads one chosen month from the on-device ledger', async () => {
+  await add({ amountPaise: 100, note: 'chai', createdAt: new Date(2026, 6, 31, 23).getTime() });
+  await add({ amountPaise: 200, note: 'auto', createdAt: new Date(2026, 7, 1, 0).getTime() });
+  await add({ amountPaise: 300, note: 'rent', createdAt: new Date(2026, 7, 31, 23).getTime() });
+  await add({ amountPaise: 400, note: 'chai', createdAt: new Date(2026, 8, 1, 0).getTime() });
+  const august = await loadMonthEntries('2026-08');
+  assert.deepEqual(august.map((entry) => [entry.amountPaise, entry.note]), [[200, 'auto'], [300, 'rent']]);
+  assert.deepEqual(Object.keys(august[0]).sort(), ['amountPaise', 'category', 'id', 'note', 'timestamp']);
+  assert.equal(august[0].timestamp, new Date(2026, 7, 1, 0).getTime());
+});
+
+test('loadMonthEntries passes a blank category on, so it counts as Uncategorised', async () => {
+  const at = new Date(2026, 8, 3).getTime();
+  const asked = [];
+  const list = async (date) => {
+    asked.push(date);
+    return [{ id: 1, schemaVersion: 1, amountPaise: 500, note: 'chai', category: '', createdAt: at }];
+  };
+  const [entry] = await loadMonthEntries('2026-09', { list });
+  assert.equal(entry.category, '');
+  assert.equal(asked[0].getFullYear(), 2026);
+  assert.equal(asked[0].getMonth(), 8);
+});
+
+test('loadMonthEntries refuses a malformed month and reports an unknown schema version', async () => {
+  for (const bad of ['2026-13', '2026-00', '2026-9', 'September', null]) {
+    await assert.rejects(loadMonthEntries(bad), TypeError, String(bad));
+  }
+  await addEntry({ amount: 80, note: 'unversioned', createdAt: new Date(2026, 8, 2).getTime() });
+  await assert.rejects(loadMonthEntries('2026-09'), { name: 'UnknownSchemaVersionError' });
 });
 
 test('a state query goes to the stub and stores nothing', async () => {

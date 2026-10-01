@@ -487,6 +487,91 @@ label {
   }
 }
 
+/* ---------- Compare screen ---------- */
+
+.compare,
+.compare-view {
+  min-width: 0;
+}
+
+/* The two month pickers side by side on one card, over the table. */
+.compare-pickers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.compare-field {
+  min-width: 0;
+  margin: 0;
+}
+
+/* Category, first month, second month, difference: fixed columns, so the
+   same category sits on one row for both months and a very large amount
+   wraps rather than pushing the page sideways. */
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.compare-table th,
+.compare-table td {
+  padding: var(--space-2) var(--space-1);
+  border-bottom: var(--border-hairline) solid var(--color-divider);
+  font-size: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.compare-table thead th {
+  color: var(--color-muted);
+  font-size: var(--text-1);
+  font-weight: var(--weight-regular);
+}
+
+.compare-category {
+  text-align: left;
+  font-weight: var(--weight-regular);
+}
+
+.compare-amount,
+.compare-difference {
+  text-align: right;
+}
+
+.compare-row:last-child th,
+.compare-row:last-child td {
+  border-bottom: 0;
+}
+
+/* The Total row: bold, with the haldi rule under it. */
+.compare-total th,
+.compare-total td {
+  border-bottom: var(--focus-ring-width) solid var(--color-haldi);
+  font-weight: var(--weight-strong);
+}
+
+/* More spent is sindoor; less or the same stays ink. The sign carries the
+   meaning too, so colour is not the only signal. */
+.compare-up {
+  color: var(--color-sindoor);
+}
+
+.compare-down,
+.compare-same {
+  color: var(--color-ink);
+}
+
+.compare-none {
+  margin: var(--space-3) 0 0;
+}
+
+.compare-error-message {
+  margin-top: 0;
+  font-weight: var(--weight-strong);
+}
+
 /* ---------- Tab bar ---------- */
 
 /* Sticky to the bottom of the viewport, so it stays in reach while the

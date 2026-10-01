@@ -51,6 +51,28 @@ export async function loadEntries(query = currentQuery(), { list = ledger.listBy
   return records.map(fromRecord).reverse();
 }
 
+/* One calendar month's entries for the Compare screen, 'YYYY-MM' as in
+   '2026-09', read through src/ledger.js's listByMonth, so they come from
+   the on-device store and a record with a version it does not know makes the
+   load reject. The category is passed on as stored, not mapped from the
+   note, so a spend stored with a blank one counts under Uncategorised. */
+export async function loadMonthEntries(month, { list = ledger.listByMonth } = {}) {
+  const text = String(month ?? '');
+  const match = /^(\d{4})-(\d{2})/.exec(text);
+  const index = match && match[0] === text ? Number(match[2]) - 1 : -1;
+  if (index < 0 || index > 11) {
+    throw new TypeError('Not a month: ' + JSON.stringify(month) + "; expected 'YYYY-MM'.");
+  }
+  const records = await list(new Date(Number(match[1]), index, 1));
+  return records.map((record) => ({
+    id: record.id,
+    amountPaise: record.amountPaise,
+    note: record.note ?? '',
+    category: record.category,
+    timestamp: record.createdAt,
+  }));
+}
+
 /* On a demo visit Enter and the category picker still show the change, but
    nothing is stored. */
 const DEMO_LEDGER = Object.freeze({ add: async () => null, updateCategory: async () => null });
