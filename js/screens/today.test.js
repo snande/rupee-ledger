@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import {
+  CATEGORIES,
   ENTRY_HINT,
   ERROR_MESSAGE,
   INVALID_HINT,
   formatPaise,
+  categoryOf,
   isToday,
   saveFailedHint,
   mountToday,
@@ -95,6 +97,31 @@ function type(screen, text) {
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+/* A tap on a control in the view, given the data attributes it renders
+   with; `inPicker` says whether it sits inside the open picker. */
+function tap(view, attrs, inPicker = false) {
+  const button = { getAttribute: (name) => attrs[name] ?? null };
+  view.dispatch('click', {
+    target: {
+      closest: (selector) => (selector === '[data-action]' ? button : selector === '.category-picker' && inPicker ? {} : null),
+    },
+  });
+}
+
+const tapChip = (view, id) => tap(view, { 'data-action': 'open-category', 'data-entry-id': String(id) });
+const tapCategory = (view, id, category) =>
+  tap(view, { 'data-action': 'pick-category', 'data-entry-id': String(id), 'data-category': category }, true);
+/* A tap on the view that lands on no control, inside the picker or not. */
+const tapBlank = (view, inPicker) => view.dispatch('click', {
+  target: { closest: (selector) => (selector === '.category-picker' && inPicker ? {} : null) },
+});
+
+/* The name each chip shows, by entry id, in the rendered view. */
+const chips = (html) => Object.fromEntries([...html.matchAll(/class="category-chip"[^>]*data-entry-id="([^"]*)"[^>]*>([^<]*)<\/button>/g)]
+  .map(([, id, name]) => [id, name]));
+const pickerOptions = (html) => [...html.matchAll(/class="category-option[^"]*"[^>]*aria-selected="(true|false)"[^>]*>([^<]*)</g)]
+  .map(([, selected, name]) => [name, selected === 'true']);
 
 test('amounts go through the shared formatPaise: ₹, Indian grouping, paise only when present', () => {
   assert.equal(formatPaise, sharedFormatPaise);
@@ -194,6 +221,7 @@ test('every class the screen uses is styled from tokens in css/controls.css', as
     renderTodayView({ status: 'loading' }),
     renderTodayView({ status: 'error' }),
     renderTodayView({ status: 'filled', entries: sample, newestId: 'a' }),
+    renderTodayView({ status: 'filled', entries: sample, picking: 'a' }),
   ].join('');
   /* Section names used only as test and script hooks; the .card rule draws them. */
   const hooks = new Set(['today-empty', 'today-list', 'today-loading']);
@@ -229,6 +257,9 @@ test('every tap target on the screen is at least 44 by 44 CSS pixels', async () 
   assert.match(rule('.quick-entry'), /min-height: var\(--quick-entry-height\)/);
   assert.match(rule('.today-entry-row button'), /min-width: var\(--control-min-height\)/);
   assert.match(rule('.today-cta'), /width: 100%/);
+  assert.match(rule('.category-chip'), /min-height: var\(--control-min-height\)/);
+  assert.match(rule('.category-chip'), /min-width: var\(--control-min-height\)/);
+  assert.match(rule('.category-option'), /min-height: var\(--control-min-height\)/);
   assert.ok(px('--control-min-height') >= 44);
   assert.equal(px('--quick-entry-height'), 56);
 });
@@ -598,4 +629,142 @@ test('a save that fails while the next line is typed keeps that line and names t
   assert.equal(screen.hint.textContent, '₹120 chai was not saved. Type it again to save it.');
   assert.equal(today(screen.view.innerHTML), '₹0');
   assert.equal(saveFailedHint({ amountPaise: 4550, note: '' }, true), '₹45.5 was not saved. Press Enter to try again.');
+});
+
+/* A ledger held in memory: what load() reads back is what updateCategory()
+   last wrote, so a re-render from the store can be checked. */
+function memoryLedger(records) {
+  const calls = [];
+  const ledger = {
+    add: async () => null,
+    async updateCategory(id, category) {
+      calls.push([id, category]);
+      const record = records.find((item) => item.id === id);
+      if (!record) throw new Error('no entry ' + id);
+      record.category = category;
+      return { ...record };
+    },
+  };
+  const load = async () => records.map((record) => ({ ...record }));
+  return { ledger, load, calls };
+}
+
+test('each row shows its category as a chip, named for assistive tech', () => {
+  const html = renderTodayView({ status: 'filled', entries: [
+    { id: 'a', amountPaise: 12000, note: 'chai', category: 'Health', timestamp: now },
+    { id: 'b', amountPaise: 4550, note: 'auto', timestamp: now },
+  ] });
+  assert.deepEqual(chips(html), { a: 'Health', b: 'Transport' }, 'a spend without a category reads as its note maps');
+  assert.match(html, /<button type="button" class="category-chip" data-action="open-category" data-entry-id="a" aria-haspopup="listbox" aria-expanded="false" aria-label="Category: Health. Change category">Health<\/button>/);
+  assert.match(html, /entry-amount">₹120<\/span><button type="button" class="category-chip"/);
+  assert.doesNotMatch(html, /category-picker/, 'the picker is closed until the chip is tapped');
+  assert.equal(categoryOf({ note: 'chai', category: '' }), 'Food');
+});
+
+test('tapping the chip opens a picker of every category with the current one marked', async () => {
+  const screen = fakeScreen();
+  const { ledger, load, calls } = memoryLedger([{ id: 7, amountPaise: 12000, note: 'chai', category: 'Food', timestamp: now }]);
+  await mountToday({ main: screen.main, ledger, load });
+  tapChip(screen.view, 7);
+  const html = screen.view.innerHTML;
+  assert.deepEqual(pickerOptions(html), CATEGORIES.map((name) => [name, name === 'Food']));
+  assert.match(html, /<ul class="category-picker" id="category-picker-7" role="listbox" aria-label="Pick a category, now Food">/);
+  assert.match(html, /aria-expanded="true" aria-controls="category-picker-7"/);
+  assert.match(html, /class="category-option category-option-current" role="option" aria-selected="true"/);
+  assert.doesNotMatch(html, /Save|Confirm/);
+  assert.deepEqual(calls, []);
+});
+
+test('one tap on another category saves it, closes the picker and updates the chip at once', async () => {
+  const screen = fakeScreen();
+  const records = [
+    { id: 7, amountPaise: 12000, note: 'chai', category: 'Food', timestamp: now },
+    { id: 8, amountPaise: 4550, note: 'auto', category: 'Transport', timestamp: now },
+  ];
+  const { ledger, load, calls } = memoryLedger(records);
+  await mountToday({ main: screen.main, ledger, load });
+
+  tapChip(screen.view, 7);
+  tapCategory(screen.view, 7, 'Health');
+  assert.deepEqual(calls, [[7, 'Health']], 'written through the store update, once');
+  assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+  assert.deepEqual(chips(screen.view.innerHTML), { 7: 'Health', 8: 'Transport' });
+  assert.equal(screen.status.textContent, 'Category set to Health');
+
+  await tick();
+  assert.equal(records[0].category, 'Health');
+  /* Try again re-renders from the store. */
+  clickAction(screen.view, 'retry');
+  await tick();
+  assert.deepEqual(chips(screen.view.innerHTML), { 7: 'Health', 8: 'Transport' });
+  assert.deepEqual(chips(renderTodayView({ status: 'filled', entries: await load() })), { 7: 'Health', 8: 'Transport' });
+});
+
+test('tapping the current category or the chip again closes the picker and writes nothing', async () => {
+  const screen = fakeScreen();
+  const { ledger, load, calls } = memoryLedger([{ id: 7, amountPaise: 12000, note: 'chai', category: 'Food', timestamp: now }]);
+  await mountToday({ main: screen.main, ledger, load });
+  tapChip(screen.view, 7);
+  tapCategory(screen.view, 7, 'Food');
+  assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+  tapChip(screen.view, 7);
+  tapChip(screen.view, 7);
+  assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+  assert.deepEqual(calls, []);
+});
+
+test('Escape or a tap outside closes the picker and leaves the category as it was', async () => {
+  const screen = fakeScreen();
+  const records = [{ id: 7, amountPaise: 12000, note: 'chai', category: 'Food', timestamp: now }];
+  const { ledger, load, calls } = memoryLedger(records);
+  await mountToday({ main: screen.main, ledger, load });
+
+  tapChip(screen.view, 7);
+  let prevented = false;
+  screen.view.dispatch('keydown', { key: 'Escape', preventDefault: () => { prevented = true; } });
+  assert.ok(prevented);
+  assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+
+  tapChip(screen.view, 7);
+  tapBlank(screen.view, true);
+  assert.match(screen.view.innerHTML, /category-picker/, 'a tap inside the picker keeps it open');
+  tapBlank(screen.view, false);
+  assert.doesNotMatch(screen.view.innerHTML, /category-picker/);
+
+  await tick();
+  assert.deepEqual(calls, []);
+  assert.equal(records[0].category, 'Food');
+  assert.deepEqual(chips(screen.view.innerHTML), { 7: 'Food' });
+});
+
+test('a category write that fails puts the old one back and says so', async () => {
+  const screen = fakeScreen();
+  const ledger = { add: async () => null, updateCategory: async () => { throw new Error('quota'); } };
+  await mountToday({ main: screen.main, ledger, load: async () => [{ id: 7, amountPaise: 12000, note: 'chai', category: 'Food', timestamp: now }] });
+  tapChip(screen.view, 7);
+  tapCategory(screen.view, 7, 'Bills');
+  assert.deepEqual(chips(screen.view.innerHTML), { 7: 'Bills' });
+  await tick();
+  assert.deepEqual(chips(screen.view.innerHTML), { 7: 'Food' });
+  assert.equal(screen.status.textContent, 'The category for ₹120 chai was not saved.');
+});
+
+test('a category picked while the spend is still saving is written once the save resolves', async () => {
+  const screen = fakeScreen();
+  let finishSave;
+  const calls = [];
+  const ledger = {
+    add: (entry) => new Promise((resolve) => { finishSave = () => resolve({ id: 42, ...entry, category: 'Food' }); }),
+    updateCategory: async (id, category) => { calls.push([id, category]); },
+  };
+  await mountToday({ main: screen.main, ledger, load: async () => [] });
+  type(screen, '120 chai');
+  assert.deepEqual(chips(screen.view.innerHTML), { 'added-1': 'Food' });
+  tapChip(screen.view, 'added-1');
+  tapCategory(screen.view, 'added-1', 'Entertainment');
+  assert.deepEqual(chips(screen.view.innerHTML), { 'added-1': 'Entertainment' });
+  assert.deepEqual(calls, [], 'no id to write to yet');
+  finishSave();
+  await tick();
+  assert.deepEqual(calls, [[42, 'Entertainment']]);
 });

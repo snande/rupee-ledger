@@ -5,7 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { fromRecord, isDemo, ledgerFor, loadEntries } from './ledger.js';
 import { mountToday } from '../screens/today.js';
 import { add, closeLedger } from '../../src/ledger.js';
-import { addEntry } from '../../src/ledger/store.js';
+import { addEntry, updateCategory } from '../../src/ledger/store.js';
 import { totals } from '../../src/totals.js';
 import { createFakeIndexedDB, FakeIDBKeyRange } from '../../src/ledger/fake-indexeddb.js';
 
@@ -71,7 +71,8 @@ const shown = (html, key) => (html.match(new RegExp('data-' + key + '-total[^>]*
 test('a stored record reads as paise and a timestamp the totals understand', () => {
   const at = new Date(2026, 8, 30, 9, 0).getTime();
   const entry = fromRecord({ id: 7, schemaVersion: 1, amountPaise: 12000, note: 'chai', createdAt: at });
-  assert.deepEqual(entry, { id: 7, amountPaise: 12000, note: 'chai', timestamp: at });
+  assert.deepEqual(entry, { id: 7, amountPaise: 12000, note: 'chai', category: 'Food', timestamp: at });
+  assert.equal(fromRecord({ id: 8, amountPaise: 100, note: 'chai', category: 'Bills', createdAt: at }).category, 'Bills');
   assert.deepEqual(totals([entry], new Date(at)), { today: 12000, month: 12000 });
 });
 
@@ -80,7 +81,7 @@ test('the quick-entry box writes through the versioned ledger add, and loadEntri
   const ledger = ledgerFor(query(''));
   assert.equal(ledger.add, add, 'no wrapper between the box and src/ledger.js');
   const saved = await ledger.add({ amountPaise: 4550, note: 'auto', createdAt: at });
-  assert.deepEqual(fromRecord(saved), { id: 1, amountPaise: 4550, note: 'auto', timestamp: at });
+  assert.deepEqual(fromRecord(saved), { id: 1, amountPaise: 4550, note: 'auto', category: 'Transport', timestamp: at });
   assert.deepEqual(storedRecords(), [
     { id: 1, schemaVersion: 1, amountPaise: 4550, note: 'auto', category: 'Transport', createdAt: at },
   ]);
@@ -116,6 +117,7 @@ test('a state query goes to the stub and stores nothing', async () => {
   assert.deepEqual(await loadEntries(query('state=empty'), { list: fail }), []);
   assert.equal((await loadEntries(query('state=filled'), { list: fail })).length, 4);
   assert.equal(await ledgerFor(query('state=filled')).add({ amountPaise: 100, note: '', createdAt: 1 }), null);
+  assert.equal(await ledgerFor(query('state=filled')).updateCategory('sample-1', 'Bills'), null);
   assert.equal(fake.transactions.length, 0);
 });
 
@@ -203,4 +205,38 @@ test('the module is offline and shows no currency but ₹', async () => {
   const source = await readFile(new URL('./ledger.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /https?:|fetch\(|XMLHttpRequest/);
   assert.doesNotMatch(source, /[$€£¥₩₽¢]|\bUSD\b|\bINR\b|\bRs\.?\s/);
+});
+
+test('the Today screen changes a category through the store update', () => {
+  const ledger = ledgerFor(query(''));
+  assert.equal(ledger.updateCategory, updateCategory);
+});
+
+test('end to end: tapping a chip then a category stores it, and a reload shows it', async () => {
+  await add({ amountPaise: 12000, note: 'chai' });
+  const screen = fakeScreen();
+  await mountToday({ main: screen.main, query: query('') });
+  assert.match(screen.view.innerHTML, /data-entry-id="1" aria-haspopup="listbox" aria-expanded="false" aria-label="Category: Food\. Change category">Food</);
+
+  const tap = (attrs, inPicker) => screen.view.dispatch('click', {
+    target: { closest: (selector) => (selector === '[data-action]' ? { getAttribute: (name) => attrs[name] ?? null } : inPicker ? {} : null) },
+  });
+  tap({ 'data-action': 'open-category', 'data-entry-id': '1' });
+  assert.match(screen.view.innerHTML, /role="listbox"/);
+  const before = fake.transactions.length;
+  tap({ 'data-action': 'pick-category', 'data-entry-id': '1', 'data-category': 'Health' }, true);
+  assert.doesNotMatch(screen.view.innerHTML, /role="listbox"/);
+  assert.match(screen.view.innerHTML, /aria-label="Category: Health\. Change category">Health</);
+
+  await settle();
+  const writes = fake.transactions.slice(before).filter((tx) => tx.mode === 'readwrite');
+  assert.equal(writes.length, 1, 'one write, no Save step');
+  assert.deepEqual(writes[0].options, { durability: 'strict' });
+  assert.deepEqual(storedRecords().map(({ id, note, category, amountPaise }) => [id, note, category, amountPaise]),
+    [[1, 'chai', 'Health', 12000]]);
+
+  await closeLedger();
+  const reopened = fakeScreen();
+  await mountToday({ main: reopened.main, query: query('') });
+  assert.match(reopened.view.innerHTML, /aria-label="Category: Health\. Change category">Health</);
 });

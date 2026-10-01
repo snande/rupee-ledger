@@ -2,7 +2,7 @@
  * Demo data source for the Today screen. js/data/ledger.js sends a visit here
  * when its query names a state, so each screen state can be shown on demand.
  * The boundary is one function returning a Promise of entries, each
- * { id, amountPaise, note, timestamp }; the sample entries are dated at the
+ * { id, amountPaise, note, category, timestamp }; the sample entries are dated at the
  * moment they load, so they count as today's. Nothing here is stored.
  *
  * The `state` query parameter forces a screen state for demos, e.g.
@@ -18,10 +18,10 @@ export const STUB_STATES = ['empty', 'filled', 'loading', 'error'];
 export const DEFAULT_STUB_STATE = 'empty';
 
 const SAMPLE_ENTRIES = [
-  { id: 'sample-4', amountPaise: 124500, note: 'Electricity top-up' },
-  { id: 'sample-3', amountPaise: 18000, note: 'Vegetables from the market' },
-  { id: 'sample-2', amountPaise: 4550, note: 'Auto to the station' },
-  { id: 'sample-1', amountPaise: 2000, note: 'Cutting chai' },
+  { id: 'sample-4', amountPaise: 124500, note: 'Electricity top-up', category: 'Bills' },
+  { id: 'sample-3', amountPaise: 18000, note: 'Vegetables from the market', category: 'Shopping' },
+  { id: 'sample-2', amountPaise: 4550, note: 'Auto to the station', category: 'Transport' },
+  { id: 'sample-1', amountPaise: 2000, note: 'Cutting chai', category: 'Food' },
 ];
 
 /* The query after the path in the page's hash, as in '#/today?state=error'. */
