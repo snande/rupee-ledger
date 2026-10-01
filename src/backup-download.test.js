@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
 import { exportBackup } from './backup-download.js';
-import { backupFilename, buildBackup } from './backup-export.js';
+import { backupFilename, buildBackup, serializeBackup } from './backup-export.js';
 import { add, closeLedger } from './ledger.js';
 import { addEntry, listEntries } from './ledger/store.js';
 import { createFakeIndexedDB, FakeIDBKeyRange } from './ledger/fake-indexeddb.js';
@@ -119,6 +119,21 @@ test('it downloads every stored entry as dated JSON, then revokes the URL', asyn
   assert.deepEqual(steps, ['createObjectURL', 'create', 'append', 'click', 'remove', 'revokeObjectURL']);
   assert.deepEqual(page.log[3], ['click', href, backupFilename(NOW)]);
   assert.deepEqual(page.log[5], ['revokeObjectURL', href]);
+  assert.deepEqual(network, []);
+});
+
+/* The wiring the issue names: the entries come from listEntries() in
+   src/ledger/store.js and the file is serializeBackup() from
+   src/backup-export.js, byte for byte, with nothing added or reformatted. */
+test('the file is serializeBackup() of listEntries(), byte for byte', async () => {
+  await add({ amountPaise: 2500, note: 'bus', createdAt: new Date(2026, 9, 1, 7).getTime() });
+  await addEntry({ amount: 120, note: 'lunch', createdAt: new Date(2026, 8, 2).getTime() });
+
+  const page = fakePage();
+  await exportBackup({ doc: page.doc, url: page.url, now: NOW });
+
+  const blob = [...page.blobs.values()][0];
+  assert.equal(await blob.text(), serializeBackup(await listEntries(), NOW));
   assert.deepEqual(network, []);
 });
 
