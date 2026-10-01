@@ -23,6 +23,12 @@
 // are both imported, and importing that backup again adds neither. Imported
 // records get a fresh id and carry `schemaVersion` like those `add` in
 // ./ledger.js writes.
+//
+// The Import backup file picker on the Backup screen (js/screens/backup.js,
+// at #/backup) reads the chosen file on the phone with File.text() or
+// FileReader, passes its text to `parseBackup`, shows the thrown message
+// when the file is refused (nothing is written), and otherwise hands the
+// entries to `importEntries` and shows the `added` and `skipped` counts.
 
 import { categorise } from './categorise.js';
 import { SCHEMA_VERSION } from './ledger.js';
