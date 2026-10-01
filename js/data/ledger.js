@@ -11,7 +11,7 @@
  * integer paise; no rupee conversion happens here. A record with a version the ledger does not know makes the
  * load reject, and the screen reports that rather than misreading it.
  *
- * Every read and write goes to the on-device store; there is no sample or
+ * Every read and write goes to the on-device store. There is no sample or
  * demo data, so a new phone starts with an empty ledger whatever the URL says.
  */
 
@@ -39,9 +39,7 @@ export function fromRecord(record) {
   };
 }
 
-/* `_query` is the router's query; it is accepted but no longer changes what
-   is read. */
-export async function loadEntries(_query, { list = ledger.listByMonth, now = new Date() } = {}) {
+export async function loadEntries({ list = ledger.listByMonth, now = new Date() } = {}) {
   const records = await list(now);
   return records.map(fromRecord).reverse();
 }
@@ -110,8 +108,7 @@ export async function loadAllEntries({ list = listEntries } = {}) {
    store's updateCategory() for the category picker. */
 const LEDGER = Object.freeze({ ...ledger, updateCategory });
 
-/* The ledger the Today screen writes to: always the real, on-device one,
-   whatever the query. */
+/* The ledger the Today screen writes to: always the real, on-device one. */
 export function ledgerFor() {
   return LEDGER;
 }

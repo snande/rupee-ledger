@@ -1,7 +1,7 @@
 // A newly installed phone: an empty IndexedDB boots to an empty ledger, the
 // Today and Month screens both show ₹0, the first spend is written to the
-// store before add() resolves, and booting again on the same store brings
-// it back. Nothing on the runtime path reads sample data or the network.
+// store before the screen says "Added", and booting again on the same store
+// returns it. Nothing on the runtime path reads sample data or the network.
 
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
@@ -15,6 +15,9 @@ import { mountToday } from '../../js/screens/today.js';
 import { mountMonth } from '../../js/screens/month.js';
 
 const ROOT = new URL('../../', import.meta.url);
+
+/* The fake ledger answers on timers, so wait a few of them out. */
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
 
 let fake;
 
@@ -38,10 +41,12 @@ function fakeMain() {
   const element = () => {
     const attrs = new Map();
     const classes = new Set();
+    const listeners = new Map();
     return {
       innerHTML: '',
       textContent: '',
       value: '',
+      offsetWidth: 0,
       getAttribute: (name) => (attrs.has(name) ? attrs.get(name) : null),
       setAttribute: (name, value) => attrs.set(name, String(value)),
       removeAttribute: (name) => attrs.delete(name),
@@ -51,15 +56,18 @@ function fakeMain() {
         contains: (name) => classes.has(name),
         toggle: (name, on) => (on ? classes.add(name) : classes.delete(name)),
       },
-      addEventListener() {},
+      addEventListener: (type, fn) => listeners.set(type, fn),
+      dispatch: (type, event = {}) => listeners.get(type)?.(event),
       focus() {},
     };
   };
   return {
-    part: (selector) => parts.get(selector),
-    querySelector(selector) {
+    part(selector) {
       if (!parts.has(selector)) parts.set(selector, element());
       return parts.get(selector);
+    },
+    querySelector(selector) {
+      return this.part(selector);
     },
   };
 }
@@ -76,7 +84,7 @@ test('after an empty boot the Today and Month screens both show ₹0', async () 
   await initLedger({ persistTimeoutMs: 10 });
 
   const today = fakeMain();
-  await mountToday({ main: today, query: new URLSearchParams('state=filled') });
+  await mountToday({ main: today });
   const todayView = today.part('[data-today-view]').innerHTML;
   assert.equal(shown(todayView, 'today'), '₹0');
   assert.equal(shown(todayView, 'month'), '₹0');
@@ -89,32 +97,53 @@ test('after an empty boot the Today and Month screens both show ₹0', async () 
   assert.deepEqual(storedRecords(), []);
 });
 
-test('the first spend is in the store before add() resolves, and a re-boot returns it', async () => {
+test('the first spend is in the store before the Today screen says Added, and a re-boot returns it', async () => {
   await initLedger({ persistTimeoutMs: 10 });
+  const screen = fakeMain();
+  await mountToday({ main: screen });
+  const status = screen.part('[data-entry-status]');
+  const view = screen.part('[data-today-view]');
 
   let release;
   fake.commitGate = new Promise((resolve) => {
     release = resolve;
   });
-  let resolved = false;
-  const saving = add({ amountPaise: 12000, note: 'chai', createdAt: Date.now() }).then((saved) => {
-    resolved = true;
-    return saved;
-  });
-  await new Promise((resolve) => setTimeout(resolve, 20));
-  assert.equal(resolved, false, 'add() waits for the commit');
-  assert.deepEqual(storedRecords(), []);
+  screen.part('#quick-entry').value = '120 chai';
+  screen.part('[data-today-form]').dispatch('submit', { preventDefault() {} });
+
+  await settle();
+  assert.deepEqual(storedRecords(), [], 'the commit is still held');
+  assert.doesNotMatch(status.textContent, /Added/, 'nothing confirms a spend the store does not hold');
+  assert.match(view.innerHTML, /<li aria-busy="true"/, 'the row is marked as saving');
 
   release();
-  const saved = await saving;
-  assert.equal(storedRecords().length, 1, 'written by the time add() resolves');
+  await settle();
+  assert.equal(storedRecords().length, 1, 'written once the gate opens');
+  assert.equal(status.textContent, 'Added ₹120 chai');
+  assert.doesNotMatch(view.innerHTML, /aria-busy="true"><span/);
 
   await closeLedger();
   const { entries } = await initLedger({ persistTimeoutMs: 10 });
   assert.equal(entries.length, 1);
-  assert.equal(entries[0].id, saved.id);
   assert.equal(entries[0].amountPaise, 12000);
   assert.equal(entries[0].note, 'chai');
+});
+
+test('add() itself only resolves once the write has committed', async () => {
+  await initLedger({ persistTimeoutMs: 10 });
+  let release;
+  fake.commitGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  let resolved = false;
+  const saving = add({ amountPaise: 4550, note: 'auto', createdAt: Date.now() }).then(() => {
+    resolved = true;
+  });
+  await settle();
+  assert.equal(resolved, false);
+  release();
+  await saving;
+  assert.equal(storedRecords().length, 1);
 });
 
 /* Every .js file under `dir` that is not a test, relative to the repo root. */

@@ -392,10 +392,14 @@ test('opening the app on Today through the router focuses the entry box and load
   parts['#quick-entry'].value = '120 chai';
   parts['[data-today-form]'].dispatch('submit', { preventDefault() {} });
   assert.equal(parts['#quick-entry'].value, '');
-  assert.match(parts['[data-today-view]'].innerHTML, /data-today-total>₹120</);
+  assert.equal(parts['[data-entry-status]'].textContent, 'Saving ₹120 chai…', 'not confirmed before the write commits');
+
   await settle();
   const records = [...fake.databases.get('rupee-ledger').stores.get('entries').records.values()];
   assert.deepEqual(records.map(({ amountPaise, note }) => ({ amountPaise, note })), [{ amountPaise: 12000, note: 'chai' }]);
+  assert.equal(parts['[data-entry-status]'].textContent, 'Added ₹120 chai');
+  assert.match(parts['[data-today-view]'].innerHTML, /data-today-total>₹120</);
+  assert.doesNotMatch(parts['[data-today-view]'].innerHTML, /<li aria-busy/);
   await closeLedger();
 });
 

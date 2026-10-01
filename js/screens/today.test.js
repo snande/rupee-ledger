@@ -28,7 +28,7 @@ const sample = [
   { id: 'b', amountPaise: 4550, note: 'Auto <to> station', timestamp: now },
 ];
 
-/* A ledger whose add() succeeds and stores nothing, as on a demo visit. */
+/* A ledger whose add() succeeds and stores nothing. */
 const keep = { add: async () => null };
 
 /* Just enough of an element for the screen: attributes, classes, events. */
@@ -383,16 +383,17 @@ test('a load that throws synchronously also shows the error view', async () => {
   assert.match(screen.view.innerHTML, /today-error/);
 });
 
-test('the query from the router reaches the data source', async () => {
+test('the router\'s query does not reach the data source: a state query forces no sample data', async () => {
   const screen = fakeScreen();
   const seen = [];
   await mountToday({
     main: screen.main,
     ledger: keep,
     query: new URLSearchParams('state=filled'),
-    load: async (query) => { seen.push(query.get('state')); return []; },
+    load: async (...args) => { seen.push(args); return []; },
   });
-  assert.deepEqual(seen, ['filled']);
+  assert.deepEqual(seen, [[]]);
+  assert.match(screen.view.innerHTML, /today-empty/);
 });
 
 test('typing 120 chai and pressing Enter saves it, clears the box and updates the total at once', async () => {
@@ -414,8 +415,12 @@ test('typing 120 chai and pressing Enter saves it, clears the box and updates th
   assert.match(screen.view.innerHTML, /class="entry-row entry-new"><span class="entry-note">chai<\/span>/);
   assert.equal(screen.root.getAttribute('data-status'), 'filled');
   assert.equal(screen.hint.textContent, ENTRY_HINT);
-  assert.equal(screen.status.textContent, 'Added ₹120 chai');
+  assert.equal(screen.status.textContent, 'Saving ₹120 chai…', 'not confirmed before the write commits');
+  assert.match(screen.view.innerHTML, /<li aria-busy="true" class="entry-row entry-new">/);
   assert.ok(screen.input.focusCount >= 2, 'focus stays in the box');
+  await tick();
+  assert.equal(screen.status.textContent, 'Added ₹120 chai');
+  assert.doesNotMatch(screen.view.innerHTML, /<li aria-busy/);
 
   type(screen, '45.50 auto');
   assert.match(screen.view.innerHTML, /data-today-total>₹165.5</);

@@ -297,6 +297,11 @@ label {
   border-bottom: 0;
 }
 
+/* A spend whose write has not committed yet: muted until the store holds it. */
+.entry-row[aria-busy="true"] .entry-amount {
+  color: var(--color-muted);
+}
+
 .entry-note {
   flex: 1 1 auto;
   min-width: 0;
