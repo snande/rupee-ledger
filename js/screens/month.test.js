@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { test, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
@@ -17,6 +17,9 @@ import {
 } from './month.js';
 import { formatPaise } from '../../src/format-amount.js';
 import { categoryTotalsForMonth } from '../../src/category-totals.js';
+import { BACKUP_FORMAT, BACKUP_FORMAT_VERSION, importEntries, parseBackup } from '../../src/backup-import.js';
+import { addMissingEntries, closeLedger, listEntries } from '../../src/ledger/store.js';
+import { createFakeIndexedDB, FakeIDBKeyRange } from '../../src/ledger/fake-indexeddb.js';
 
 const NOW = new Date(2026, 8, 15, 12);
 const at = (month, day) => new Date(2026, month - 1, day, 10).getTime();
@@ -207,6 +210,37 @@ test('a load overtaken by a route change writes nothing', async () => {
   current = false;
   await done;
   assert.doesNotMatch(screen.view.innerHTML, /data-month-total/);
+});
+
+afterEach(async () => {
+  await closeLedger();
+});
+
+test('a backup import shows in the month total on the next mount, and a re-import changes nothing', async () => {
+  await closeLedger();
+  globalThis.indexedDB = createFakeIndexedDB();
+  globalThis.IDBKeyRange = FakeIDBKeyRange;
+  const store = { addMissingEntries, listEntries };
+  const { entries } = parseBackup(JSON.stringify({
+    format: BACKUP_FORMAT,
+    version: BACKUP_FORMAT_VERSION,
+    entries: [
+      { amount: 200, text: 'thali', category: 'Food', createdAt: at(9, 2) },
+      { amount: 80.5, text: 'auto', category: 'Transport', createdAt: at(9, 4) },
+    ],
+  }));
+  /* Mounted as the router mounts it, with the real on-device load. */
+  const monthTotal = async () => {
+    const screen = fakeScreen();
+    await mountMonth({ main: screen.main, now: NOW });
+    return total(screen.view.innerHTML);
+  };
+
+  assert.equal(await monthTotal(), '₹0');
+  assert.deepEqual(await importEntries(store, entries), { added: 2, skipped: 0 });
+  assert.equal(await monthTotal(), formatPaise(28050));
+  assert.deepEqual(await importEntries(store, entries), { added: 0, skipped: 2 });
+  assert.equal(await monthTotal(), formatPaise(28050));
 });
 
 test('the screen is hand-written: no network, no chart library, ₹ only, read only', async () => {
