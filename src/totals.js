@@ -30,6 +30,29 @@ function toDate(value) {
 }
 
 /**
+ * An entry's paise and its moment, or `null` when either is unusable; the
+ * rule every total uses to decide which entries count.
+ * @param {{ amount?: number, amountPaise?: number,
+ *           timestamp?: number | string | Date, ts?: number | string | Date }} entry
+ * @returns {{ paise: number, at: Date } | null}
+ */
+export function datedPaise(entry) {
+  const paise = toPaise(entry);
+  const at = toDate(entry?.timestamp ?? entry?.ts);
+  return paise === null || !at ? null : { paise, at };
+}
+
+/**
+ * Whether `at` falls in the given local calendar month.
+ * @param {Date} at
+ * @param {number} year  e.g. 2026.
+ * @param {number} monthIndex  0 for January, as `Date#getMonth` returns.
+ */
+export function inMonth(at, year, monthIndex) {
+  return at.getFullYear() === year && at.getMonth() === monthIndex;
+}
+
+/**
  * @param {Array<{ amount?: number, amountPaise?: number,
  *                 timestamp?: number | string | Date, ts?: number | string | Date }>} entries
  * @param {number | string | Date} [now]  The reference moment; defaults to now.
@@ -46,10 +69,9 @@ export function totals(entries, now = new Date()) {
   const day = reference.getDate();
 
   for (const entry of entries) {
-    const paise = toPaise(entry);
-    const at = toDate(entry?.timestamp ?? entry?.ts);
-    if (paise === null || !at) continue;
-    if (at.getFullYear() !== year || at.getMonth() !== month) continue;
+    const dated = datedPaise(entry);
+    if (!dated || !inMonth(dated.at, year, month)) continue;
+    const { paise, at } = dated;
 
     result.month += paise;
     if (at.getDate() === day) result.today += paise;
