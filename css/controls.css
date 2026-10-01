@@ -478,6 +478,27 @@ label {
   min-width: 0;
 }
 
+/* Export backup: a quiet secondary control under the spends, apart from the
+   entry box, with its error line beneath it. */
+.today-backup {
+  display: grid;
+  justify-items: start;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.today-export {
+  min-width: var(--control-min-height);
+}
+
+.today-export-status {
+  font-weight: var(--weight-strong);
+}
+
+.today-export-status[hidden] {
+  display: none;
+}
+
 .today-entry-row button {
   flex: none;
   min-width: var(--control-min-height);

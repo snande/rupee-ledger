@@ -202,6 +202,13 @@ test('the Search screen and src/search.js are precached, so search opens offline
   }
 });
 
+test('the backup export modules are precached, so Export backup works offline', () => {
+  const names = listed(loadWorker().ASSETS);
+  for (const path of ['src/backup-export.js', 'src/backup-download.js']) {
+    assert.ok(names.includes(path), `${path} is not precached`);
+  }
+});
+
 test('every precached file exists, so install cannot fail on a 404', () => {
   for (const path of listed(loadWorker().ASSETS)) {
     assert.ok(exists(path), `sw.js precaches ${path}, which does not exist`);

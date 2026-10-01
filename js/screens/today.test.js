@@ -6,6 +6,8 @@ import {
   CATEGORIES,
   ENTRY_HINT,
   ERROR_MESSAGE,
+  EXPORT_ERROR,
+  EXPORT_LABEL,
   INVALID_HINT,
   formatPaise,
   categoryOf,
@@ -977,4 +979,96 @@ test('a category picked while the spend is still saving is written once the save
   finishSave();
   await tick();
   assert.deepEqual(calls, [[42, 'Entertainment']]);
+});
+
+/* The screen with its Export backup button and error line. */
+function fakeScreenWithExport() {
+  const screen = fakeScreen();
+  const button = fakeElement();
+  const status = fakeElement();
+  status.setAttribute('hidden', '');
+  const find = screen.main.querySelector;
+  screen.main.querySelector = (selector) =>
+    selector === '[data-export-backup]' ? button : selector === '[data-export-status]' ? status : find(selector);
+  return { ...screen, exportButton: button, exportStatus: status };
+}
+
+test('the Today screen shows an Export backup button outside the re-rendered view', () => {
+  const state = { status: 'filled', entries: sample };
+  const html = renderToday(state);
+  const viewEnd = html.indexOf(renderTodayView(state)) + renderTodayView(state).length + '</div>'.length;
+  assert.match(html, /<button type="button" class="button-secondary today-export" data-export-backup>Export backup<\/button>/);
+  assert.equal(EXPORT_LABEL, 'Export backup');
+  assert.match(html, /<p class="hint hint-error today-export-status" role="alert" data-export-status hidden><\/p>/);
+  assert.doesNotMatch(renderTodayView({ status: 'filled', entries: sample }), /data-export-backup/);
+  assert.ok(html.indexOf('<section class="today-backup"') === viewEnd, 'the button sits just after the view, so a re-render keeps it');
+  assert.ok(html.indexOf('data-export-backup') < html.indexOf('data-today-form'), 'the entry box stays last');
+  assert.doesNotMatch(html.slice(html.indexOf('data-today-form')), /data-export/);
+});
+
+test('Export backup runs the backup once per tap and leaves the entry box alone', async () => {
+  const screen = fakeScreenWithExport();
+  let calls = 0;
+  let finish;
+  const backup = () => {
+    calls += 1;
+    return new Promise((resolve) => { finish = resolve; });
+  };
+  await mountToday({ main: screen.main, load: async () => sample, ledger: keep, backup });
+  const focused = screen.input.focusCount;
+
+  screen.exportButton.dispatch('click');
+  screen.exportButton.dispatch('click');
+  assert.equal(calls, 1);
+  assert.equal(screen.exportButton.disabled, true);
+  finish({ filename: 'rupee-ledger-backup-2026-10-01.json', count: 2 });
+  await tick();
+  assert.equal(screen.exportButton.disabled, false);
+  assert.equal(screen.exportStatus.getAttribute('hidden'), '');
+  assert.equal(screen.exportStatus.textContent, '');
+  assert.equal(screen.input.focusCount, focused);
+
+  screen.exportButton.dispatch('click');
+  await tick();
+  assert.equal(calls, 2);
+});
+
+test('a backup whose read fails shows a visible error, and the next one clears it', async () => {
+  const screen = fakeScreenWithExport();
+  let fail = true;
+  const backup = async () => {
+    if (fail) throw new Error('The ledger read was aborted.');
+    return { filename: 'x.json', count: 0 };
+  };
+  await mountToday({ main: screen.main, load: async () => sample, ledger: keep, backup });
+
+  screen.exportButton.dispatch('click');
+  await tick();
+  assert.equal(screen.exportStatus.textContent, EXPORT_ERROR);
+  assert.equal(screen.exportStatus.getAttribute('hidden'), null);
+  assert.equal(screen.exportButton.disabled, false);
+
+  fail = false;
+  screen.exportButton.dispatch('click');
+  await tick();
+  assert.equal(screen.exportStatus.textContent, '');
+  assert.equal(screen.exportStatus.getAttribute('hidden'), '');
+});
+
+test('a backup that throws at once still shows the error', async () => {
+  const screen = fakeScreenWithExport();
+  const backup = () => {
+    throw new Error('no store');
+  };
+  await mountToday({ main: screen.main, load: async () => sample, ledger: keep, backup });
+  screen.exportButton.dispatch('click');
+  await tick();
+  assert.equal(screen.exportStatus.textContent, EXPORT_ERROR);
+});
+
+test('the Export backup control is styled from tokens', async () => {
+  const css = await readFile(new URL('../../css/controls.css', import.meta.url), 'utf8');
+  for (const name of ['today-backup', 'today-export', 'today-export-status']) {
+    assert.match(css, new RegExp('\\.' + name + '[\\s,{:.[]'), 'no rule for .' + name);
+  }
 });
