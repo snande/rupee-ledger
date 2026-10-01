@@ -85,9 +85,9 @@ export function sameId(a, b) {
 }
 
 /* The picker under a chip: a listbox with one option per name in
-   CATEGORIES, the current one marked and the one Tab reaches; the arrow
-   keys, Home and End move between the rest. A tap on one saves it; there is
-   no Save button. */
+   CATEGORIES, the current one marked with a tick and the one Tab reaches;
+   the arrow keys, Home and End move between the rest. A tap on one saves
+   it; there is no Save button. */
 function pickerView(entry, current) {
   const id = escapeHtml(entry.id);
   const options = CATEGORIES.map((name) => {
@@ -97,6 +97,7 @@ function pickerView(entry, current) {
         'aria-selected="' + selected + '" tabindex="' + (selected ? '0' : '-1') + '" ' +
         'data-action="pick-category" data-entry-id="' + id + '" data-category="' + escapeHtml(name) + '">' +
         escapeHtml(name) +
+        (selected ? '<span class="category-option-mark" aria-hidden="true">✓</span>' : '') +
       '</button>' +
     '</li>';
   }).join('');

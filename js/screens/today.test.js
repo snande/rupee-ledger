@@ -705,11 +705,21 @@ test('tapping the chip opens a picker of every category with the current one mar
   assert.deepEqual(pickerOptions(html), CATEGORIES.map((name) => [name, name === 'Food']));
   assert.match(html, /<ul class="category-picker" id="category-picker-7" role="listbox" aria-label="Pick a category, now Food">/);
   assert.match(html, /aria-expanded="true" aria-controls="category-picker-7"/);
-  assert.match(html, /class="category-option category-option-current" role="option" aria-selected="true" tabindex="0"/);
+  assert.match(html, /class="category-option category-option-current" role="option" aria-selected="true" tabindex="0"[^>]*>Food<span class="category-option-mark" aria-hidden="true">✓<\/span><\/button>/);
+  assert.equal((html.match(/category-option-mark/g) ?? []).length, 1, 'only the current option carries the tick');
   assert.equal((html.match(/tabindex="-1"/g) ?? []).length, CATEGORIES.length - 1, 'Tab reaches the current option; arrows the rest');
   assert.doesNotMatch(html, /Save|Confirm/);
   assert.equal(screen.view.focused, '.category-option-current');
   assert.deepEqual(calls, []);
+});
+
+test('the picker styles hold no quoted or raw value, only tokens', async () => {
+  const css = await readFile(new URL('../../css/controls.css', import.meta.url), 'utf8');
+  const body = css.slice(css.indexOf('.category-chip {'), css.indexOf('/* A new spend arrives'))
+    .replace(/\/\*[\s\S]*?\*\//g, '');
+  for (const [, value] of body.matchAll(/:\s*([^;{}]+);/g)) {
+    assert.doesNotMatch(value, /["']|#[0-9a-f]{3,8}\b|\d(?:px|rem|em|pt)\b/i, value);
+  }
 });
 
 test('the arrow keys, Home and End move focus through the picker', async () => {

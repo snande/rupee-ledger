@@ -350,14 +350,14 @@ label {
   text-align: left;
 }
 
-/* The current category: haldi edge and a tick. */
+/* The current category: haldi edge and a tick. The tick is in the markup,
+   hidden from assistive tech, which reads aria-selected instead. */
 .category-option-current {
   border-color: var(--color-haldi);
   font-weight: var(--weight-strong);
 }
 
-.category-option-current::after {
-  content: "✓";
+.category-option-mark {
   color: var(--color-haldi);
 }
 
