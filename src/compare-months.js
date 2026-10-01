@@ -44,32 +44,43 @@ function amountIn(summary, category) {
   return Object.hasOwn(summary.byCategory, category) ? summary.byCategory[category] : 0;
 }
 
+/* The summary with every one of `categories` listed, at 0 where the month has none. */
+function withCategories(summary, categories) {
+  return {
+    ...summary,
+    byCategory: Object.fromEntries(categories.map((category) => [category, amountIn(summary, category)])),
+  };
+}
+
 /**
  * @param {Array<{ amount?: number, amountPaise?: number, category?: string | null,
  *                 timestamp?: number | string | Date, ts?: number | string | Date }>} entries
- * @param {string | { year: number, month: number }} firstMonth  e.g. `'2026-08'`.
- * @param {string | { year: number, month: number }} secondMonth  e.g. `'2026-09'`.
+ * @param {string | { year: number, month: number }} monthA  A `YYYY-MM` month such
+ *   as `'2026-08'`, or `{ year, month }`.
+ * @param {string | { year: number, month: number }} monthB  A `YYYY-MM` month such
+ *   as `'2026-09'`, or `{ year, month }`.
  * @returns {{
- *   first: { month: string, total: number, byCategory: Record<string, number> },
- *   second: { month: string, total: number, byCategory: Record<string, number> },
- *   difference: { total: number, byCategory: Record<string, number> },
- * }}  Integer paise. Differences are second minus first; a category missing
- *   from one month counts as 0 there. Entries are counted exactly when
- *   `totals()` would count them for that month; blank or missing categories
- *   are grouped as `Uncategorised`.
+ *   a: { month: string, total: number, byCategory: Record<string, number> },
+ *   b: { month: string, total: number, byCategory: Record<string, number> },
+ *   diff: { total: number, byCategory: Record<string, number> },
+ * }}  Integer paise. `a.byCategory`, `b.byCategory` and `diff.byCategory`
+ *   share the same keys: every category in either month, at 0 in a month
+ *   without it, so `diff.byCategory[c] === b.byCategory[c] - a.byCategory[c]`.
+ *   When neither month has entries the maps are empty. Entries are counted
+ *   exactly when `totals()` would count them for that month; blank or
+ *   missing categories are grouped as `Uncategorised`.
  * @throws {TypeError} when a month identifier is malformed.
  */
-export function compareMonths(entries, firstMonth, secondMonth) {
-  const first = monthSummary(entries, parseMonth(firstMonth));
-  const second = monthSummary(entries, parseMonth(secondMonth));
+export function compareMonths(entries, monthA, monthB) {
+  const summaryA = monthSummary(entries, parseMonth(monthA));
+  const summaryB = monthSummary(entries, parseMonth(monthB));
 
-  const categories = new Set([...Object.keys(first.byCategory), ...Object.keys(second.byCategory)]);
+  const categories = [...new Set([...Object.keys(summaryA.byCategory), ...Object.keys(summaryB.byCategory)])];
+  const a = withCategories(summaryA, categories);
+  const b = withCategories(summaryB, categories);
   const byCategory = Object.fromEntries(
-    [...categories].map((category) => [
-      category,
-      amountIn(second, category) - amountIn(first, category),
-    ]),
+    categories.map((category) => [category, b.byCategory[category] - a.byCategory[category]]),
   );
 
-  return { first, second, difference: { total: second.total - first.total, byCategory } };
+  return { a, b, diff: { total: b.total - a.total, byCategory } };
 }

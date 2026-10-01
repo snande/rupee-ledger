@@ -153,7 +153,7 @@ test('the rows are exactly what compareMonths gives, every amount formatted as â
   assert.deepEqual(categoryRows(result), ['Bills', 'Food', 'Transport', UNCATEGORISED]);
   const html = renderCompareView({ status: 'filled', entries: ENTRIES, first: '2026-08', second: '2026-09' });
   for (const category of categoryRows(result)) {
-    assert.equal(rowCells(html, 'data-category="' + category + '"')[3], formatDifference(result.difference.byCategory[category]));
+    assert.equal(rowCells(html, 'data-category="' + category + '"')[3], formatDifference(result.diff.byCategory[category]));
   }
   const amounts = [...html.matchAll(/<td class="amount[^"]*">([^<]*)</g)].map((m) => m[1]);
   assert.equal(amounts.length, 5 * 3);
