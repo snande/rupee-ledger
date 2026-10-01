@@ -48,6 +48,7 @@ test('buildBackup of no entries has an empty entries array', () => {
   assert.equal(backup.version, 1);
 });
 
+// rupee-ledger-backup-YYYY-MM-DD.json, by the device-local calendar date.
 test('backupFilename uses the device-local calendar date', () => {
   assert.equal(backupFilename(now), 'rupee-ledger-backup-2025-03-07.json');
   assert.equal(backupFilename(at(2026, 12, 25, 23, 59)), 'rupee-ledger-backup-2026-12-25.json');

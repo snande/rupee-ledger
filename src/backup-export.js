@@ -28,7 +28,8 @@ export function buildBackup(entries, now) {
 }
 
 /**
- * The download name for a backup taken at `now`, dated by the device-local
+ * The download name for a backup taken at `now`, in the shape
+ * `rupee-ledger-backup-YYYY-MM-DD.json` and dated by the device-local
  * calendar day, e.g. `rupee-ledger-backup-2025-03-07.json`.
  * @param {Date} now
  * @returns {string}
@@ -42,6 +43,7 @@ export function backupFilename(now) {
 
 /**
  * The backup file's text: `buildBackup(entries, now)` as indented JSON.
+ * `JSON.parse` of the result is deep-equal to `buildBackup(entries, now)`.
  * @param {Array<object>} entries
  * @param {Date} now
  * @returns {string}
