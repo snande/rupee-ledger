@@ -32,11 +32,11 @@ Fails (exit 1) when any of these breaks:
     to a PNG under icons/ that exists
   - manifest.webmanifest or scripts/make_icons.py references another origin
   - the shell is not sub-path safe, so a host serving it at /<repo>/ breaks:
-    an index.html src or href is root-absolute ("/..."), the manifest
-    start_url or scope is not "./", an sw.js precache entry (ASSETS or SHELL)
-    is not "./" or a "./" path inside the worker's directory that exists, or
-    js/sw-register.js does not register "./sw.js" or passes a root-absolute
-    script URL or scope
+    an index.html src, href or srcset URL is root-absolute ("/..."), the
+    manifest start_url or scope is not "./", an sw.js precache entry (ASSETS
+    or SHELL) is not "./" or a "./" path inside the worker's directory that
+    exists, or js/sw-register.js does not register "./sw.js" or passes a
+    root-absolute script URL or scope
 
 Standard library only, so CI needs nothing but python3.
 
@@ -136,6 +136,10 @@ class ShellParser(HTMLParser):
         for name in ("src", "href"):
             if name in attrs:
                 self.urls.append((tag, name, attrs[name].strip()))
+        for name in ("srcset", "imagesrcset"):
+            for candidate in attrs.get(name, "").split(","):
+                if candidate.strip():
+                    self.urls.append((tag, name, candidate.split()[0]))
         if tag == "link" and "stylesheet" in attrs.get("rel", "").lower().split():
             self.stylesheets.append(attrs.get("href", ""))
         if tag == "meta" and attrs.get("name", "").lower() == "viewport":
@@ -429,8 +433,38 @@ def is_root_absolute(url):
 
 
 def strip_js_comments(js):
-    js = re.sub(r"/\*.*?\*/", "", js, flags=re.S)
-    return re.sub(r"(^|\s)//.*$", r"\1", js, flags=re.M)
+    """Drop // and /* */ comments, leaving string and template literals whole.
+
+    A regex literal holding a quote or // can confuse it; neither sw.js nor
+    js/sw-register.js has one.
+    """
+    out = []
+    i, n, quote = 0, len(js), None
+    while i < n:
+        c = js[i]
+        if quote:
+            out.append(js[i : i + 2] if c == "\\" else c)
+            if c == "\\":
+                i += 2
+                continue
+            if c == quote:
+                quote = None
+            i += 1
+        elif c in "'\"`":
+            quote = c
+            out.append(c)
+            i += 1
+        elif js.startswith("//", i):
+            end = js.find("\n", i)
+            i = n if end < 0 else end
+        elif js.startswith("/*", i):
+            end = js.find("*/", i + 2)
+            i = n if end < 0 else end + 2
+            out.append(" ")
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
 
 
 def check_index_urls(root):
