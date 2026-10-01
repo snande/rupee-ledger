@@ -10,6 +10,13 @@
 //
 // Amounts are stored as integer paise (₹120 is 12000) so totals never
 // drift the way sums of fractional rupees do.
+//
+// Entries saved before categories existed have no `category` field. They are
+// never migrated in place: every read hands them back with
+// `categorise(note)` filled in (see `withCategory`), and the stored record
+// stays exactly as it was until someone picks a category for it.
+
+import { categorise, CATEGORIES } from '../categorise.js';
 
 const DB_NAME = 'rupee-ledger';
 const DB_VERSION = 1;
@@ -22,7 +29,8 @@ let connection = null;
 /**
  * Opens the `rupee-ledger` database, creating the `entries` store (keyed by
  * an auto-generated `id`, indexed on `createdAt`) the first time. The
- * connection is shared by `addEntry` and `listEntries` until `closeLedger`.
+ * connection is shared by `addEntry`, `listEntries` and `updateCategory`
+ * until `closeLedger`.
  * @returns {Promise<IDBDatabase>}
  */
 export function openLedger() {
@@ -85,7 +93,54 @@ export async function addEntry({ amount, note, category, createdAt } = {}) {
 }
 
 /**
- * Every stored entry, oldest first by `createdAt`.
+ * Sets one stored entry's `category` and resolves with the updated record
+ * once the write has committed. Only `category` changes; amount, note, date
+ * and every other field are written back as they were.
+ * @param {number} id  the entry's `id`.
+ * @param {string} category  one of `CATEGORIES`, e.g. `Food`.
+ * @returns {Promise<object>}  the stored record with its new `category`.
+ * @throws {Error} when `category` is not one of `CATEGORIES` (nothing is
+ *   written) or no entry has that `id`.
+ */
+export async function updateCategory(id, category) {
+  if (!CATEGORIES.includes(category)) {
+    throw new Error(`Category must be one of ${CATEGORIES.join(', ')}; got ${String(category)}.`);
+  }
+  const db = await openLedger();
+
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite', { durability: 'strict' });
+    const store = tx.objectStore(STORE);
+    const request = store.get(id);
+    let updated;
+    request.onsuccess = () => {
+      if (!request.result) return;
+      updated = { ...request.result, category };
+      store.put(updated);
+    };
+    tx.oncomplete = () =>
+      updated ? resolve(updated) : reject(new Error(`No ledger entry has id ${String(id)}.`));
+    tx.onerror = tx.onabort = () =>
+      reject(tx.error ?? request.error ?? new Error('The ledger write was aborted.'));
+  });
+}
+
+/**
+ * A stored record as the app reads it: one saved before categories existed
+ * (no `category` field) gets `categorise(note)`; any other is returned as is.
+ * The stored record itself is not touched.
+ * @template {{ note?: unknown, category?: unknown }} T
+ * @param {T} record
+ * @returns {T & { category: unknown }}
+ */
+export function withCategory(record) {
+  if (record.category !== undefined) return record;
+  return { ...record, category: categorise(record.note) };
+}
+
+/**
+ * Every stored entry, oldest first by `createdAt`, each carrying a
+ * `category` (see `withCategory`).
  * @returns {Promise<Array<{ id: number, amount: number, note: string,
  *   category: string, createdAt: number }>>}
  */
@@ -96,7 +151,7 @@ export async function listEntries() {
     const tx = db.transaction(STORE, 'readonly');
     const request = tx.objectStore(STORE).index(CREATED_AT).getAll();
     tx.oncomplete = () =>
-      resolve([...request.result].sort((a, b) => a.createdAt - b.createdAt));
+      resolve([...request.result].map(withCategory).sort((a, b) => a.createdAt - b.createdAt));
     tx.onerror = tx.onabort = () =>
       reject(tx.error ?? request.error ?? new Error('The ledger read was aborted.'));
   });

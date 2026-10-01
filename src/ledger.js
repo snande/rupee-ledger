@@ -11,11 +11,16 @@
 // `listByDay` and `listByMonth` reject with an `UnknownSchemaVersionError` naming it, rather
 // than return it as an entry with misread fields.
 //
-// `add` resolves only from the write transaction's `oncomplete`, once the
+// `add` stamps each entry with `categorise(note)` in that same single write,
+// and resolves only from the write transaction's `oncomplete`, once the
 // entry has committed, so a tab kill cannot lose an entry the screen has
-// already shown as saved. The module offers no delete, overwrite or merge.
+// already shown as saved. Entries saved before categories existed are read
+// back with `categorise(note)` filled in rather than migrated. The module
+// offers no delete, overwrite or merge; re-picking an entry's category is
+// `updateCategory` in ./ledger/store.js.
 
-import { openLedger, closeLedger } from './ledger/store.js';
+import { categorise } from './categorise.js';
+import { openLedger, closeLedger, withCategory } from './ledger/store.js';
 
 export { closeLedger };
 
@@ -41,19 +46,21 @@ export class UnknownSchemaVersionError extends Error {
 }
 
 /**
- * Saves one entry and resolves with the stored record, including its `id`,
- * once the write has committed.
+ * Saves one entry, with `category` set to `categorise(note)`, and resolves
+ * with the stored record, including its `id`, once the write has committed.
  * @param {{ amountPaise: number, note?: string, createdAt?: number | Date }} entry
  *   `amountPaise` a positive whole number of paise (₹120 is 12000);
  *   `createdAt` in epoch milliseconds or a Date, defaulting to now.
  * @returns {Promise<{ id: number, schemaVersion: 1, amountPaise: number,
- *   note: string, createdAt: number }>}
+ *   note: string, category: string, createdAt: number }>}
  */
 export async function add({ amountPaise, note, createdAt } = {}) {
+  const text = String(note ?? '');
   const record = {
     schemaVersion: SCHEMA_VERSION,
     amountPaise: checkPaise(amountPaise),
-    note: String(note ?? ''),
+    note: text,
+    category: categorise(text),
     createdAt: toTimestamp(createdAt, 'createdAt'),
   };
   const db = await openLedger();
@@ -77,7 +84,7 @@ export async function add({ amountPaise, note, createdAt } = {}) {
  * record on that day is not `schemaVersion: 1`.
  * @param {number | Date} date  any moment on the wanted day.
  * @returns {Promise<Array<{ id: number, schemaVersion: 1, amountPaise: number,
- *   note: string, createdAt: number }>>}
+ *   note: string, category: string, createdAt: number }>>}
  */
 export async function listByDay(date) {
   const day = new Date(toTimestamp(date, 'date'));
@@ -94,7 +101,7 @@ export async function listByDay(date) {
  * with `UnknownSchemaVersionError` like `listByDay`.
  * @param {number | Date} date  any moment in the wanted month.
  * @returns {Promise<Array<{ id: number, schemaVersion: 1, amountPaise: number,
- *   note: string, createdAt: number }>>}
+ *   note: string, category: string, createdAt: number }>>}
  */
 export async function listByMonth(date) {
   const day = new Date(toTimestamp(date, 'date'));
@@ -104,7 +111,7 @@ export async function listByMonth(date) {
 }
 
 // Every record with `start <= createdAt < end`, checked for a known schema
-// version before any of it is returned.
+// version before any of it is returned, each carrying a `category`.
 async function listRange(start, end) {
   const range = globalThis.IDBKeyRange.bound(start, end, false, true);
   const db = await openLedger();
@@ -123,7 +130,7 @@ async function listRange(start, end) {
       unknown.map(({ id, schemaVersion }) => ({ id, schemaVersion })),
     );
   }
-  return [...records].sort((a, b) => a.createdAt - b.createdAt || a.id - b.id);
+  return records.map(withCategory).sort((a, b) => a.createdAt - b.createdAt || a.id - b.id);
 }
 
 // Paise are stored as given; anything that is not a positive safe integer

@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 
 import * as ledger from './ledger.js';
 import { add, listByDay, listByMonth, closeLedger, SCHEMA_VERSION, UnknownSchemaVersionError } from './ledger.js';
-import { openLedger, addEntry } from './ledger/store.js';
+import { openLedger, addEntry, updateCategory } from './ledger/store.js';
 
 import { createFakeIndexedDB, FakeIDBKeyRange } from './ledger/fake-indexeddb.js';
 
@@ -36,18 +36,62 @@ test('add then listByDay round-trips the entry', async () => {
   const createdAt = new Date(2026, 8, 30, 9, 15).getTime();
   const saved = await add({ amountPaise: 12000, note: 'chai', createdAt });
 
-  assert.deepEqual(saved, { id: 1, schemaVersion: 1, amountPaise: 12000, note: 'chai', createdAt });
+  assert.deepEqual(saved, { id: 1, schemaVersion: 1, amountPaise: 12000, note: 'chai', category: 'Food', createdAt });
   assert.deepEqual(await listByDay(new Date(2026, 8, 30)), [saved]);
 });
 
-test('every record add writes carries schemaVersion 1 with amountPaise, note and createdAt', async () => {
+test('every record add writes carries schemaVersion 1 with amountPaise, note, category and createdAt', async () => {
   assert.equal(SCHEMA_VERSION, 1);
   await add({ amountPaise: 12000, note: 'chai', createdAt: 1700000000000 });
   await add({ amountPaise: 4550, createdAt: new Date(1700000000001) });
 
   assert.deepEqual(storedRecords(), [
-    { id: 1, schemaVersion: 1, amountPaise: 12000, note: 'chai', createdAt: 1700000000000 },
-    { id: 2, schemaVersion: 1, amountPaise: 4550, note: '', createdAt: 1700000000001 },
+    { id: 1, schemaVersion: 1, amountPaise: 12000, note: 'chai', category: 'Food', createdAt: 1700000000000 },
+    { id: 2, schemaVersion: 1, amountPaise: 4550, note: '', category: 'Other', createdAt: 1700000000001 },
+  ]);
+});
+
+test('add stamps categorise(note) in the same single strict write as the amount and note', async () => {
+  const chai = await add({ amountPaise: 12000, note: 'chai', createdAt: 1 });
+  const auto = await add({ amountPaise: 5000, note: 'auto', createdAt: 2 });
+
+  assert.equal(chai.category, 'Food');
+  assert.equal(auto.category, 'Transport');
+  assert.deepEqual(storedRecords().map((record) => record.category), ['Food', 'Transport']);
+  assert.equal(writes().length, 2, 'one write per entry, no follow-up write for the category');
+  for (const tx of writes()) {
+    assert.deepEqual(tx.requests.map((request) => request.kind), ['add']);
+    assert.deepEqual(tx.options, { durability: 'strict' });
+  }
+});
+
+test('records saved before categories read back categorised by note, and stay untouched in the store', async () => {
+  const day = new Date(2026, 8, 30, 9).getTime();
+  await putRaw({ schemaVersion: 1, amountPaise: 12000, note: 'masala chai', createdAt: day });
+  await putRaw({ schemaVersion: 1, amountPaise: 5000, note: 'auto', createdAt: day + 1 });
+  await putRaw({ schemaVersion: 1, amountPaise: 999, note: 'misc', createdAt: day + 2 });
+  await add({ amountPaise: 300, note: 'chai', createdAt: day + 3 });
+  const before = structuredClone(storedRecords());
+
+  const listed = await listByDay(day);
+  assert.deepEqual(listed.map(({ id, amountPaise, note, category, createdAt }) => [id, amountPaise, note, category, createdAt]), [
+    [1, 12000, 'masala chai', 'Food', day],
+    [2, 5000, 'auto', 'Transport', day + 1],
+    [3, 999, 'misc', 'Other', day + 2],
+    [4, 300, 'chai', 'Food', day + 3],
+  ]);
+  assert.deepEqual((await listByMonth(day)).map((entry) => entry.category), ['Food', 'Transport', 'Other', 'Food']);
+  assert.deepEqual(storedRecords(), before, 'reading migrates nothing');
+  assert.equal('category' in storedRecords()[0], false);
+});
+
+test('a category re-picked with updateCategory is what listByDay reads back', async () => {
+  const day = new Date(2026, 8, 30, 9).getTime();
+  await putRaw({ schemaVersion: 1, amountPaise: 12000, note: 'chai', createdAt: day });
+  await updateCategory(1, 'Entertainment');
+  await closeLedger();
+  assert.deepEqual(await listByDay(day), [
+    { id: 1, schemaVersion: 1, amountPaise: 12000, note: 'chai', category: 'Entertainment', createdAt: day },
   ]);
 });
 
@@ -207,7 +251,7 @@ test('the module offers no delete, overwrite or merge operation', () => {
 test('the module uses only IndexedDB, with no third-party import and no network call', async () => {
   const source = await readFile(new URL('./ledger.js', import.meta.url), 'utf8');
   const imports = [...source.matchAll(/^\s*import\b.*?from\s*'([^']+)'/gm)].map((match) => match[1]);
-  assert.deepEqual(imports, ['./ledger/store.js']);
+  assert.deepEqual(imports, ['./categorise.js', './ledger/store.js']);
   assert.doesNotMatch(source, /\bimport\s*\(/);
   assert.doesNotMatch(source, /\b(?:require|fetch|XMLHttpRequest|WebSocket|EventSource|sendBeacon|importScripts)\s*\(/);
   assert.doesNotMatch(source, /\bhttps?:\/\//);
