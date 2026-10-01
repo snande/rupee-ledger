@@ -87,7 +87,7 @@ function amountIn(byCategory, category) {
 /* Every category either month has, by name, with Uncategorised last, so the
    same category sits on the same row for both months. */
 export function categoryRows(result) {
-  return Object.keys(result.difference.byCategory).sort((a, b) =>
+  return Object.keys(result.diff.byCategory).sort((a, b) =>
     (a === UNCATEGORISED) - (b === UNCATEGORISED) || (a < b ? -1 : a > b ? 1 : 0));
 }
 
@@ -111,9 +111,9 @@ function tableView(entries, first, second) {
   const rows = categoryRows(result).map((category) => row(
     category,
     'data-category="' + escapeHtml(category) + '"',
-    amountIn(result.first.byCategory, category),
-    amountIn(result.second.byCategory, category),
-    result.difference.byCategory[category],
+    amountIn(result.a.byCategory, category),
+    amountIn(result.b.byCategory, category),
+    result.diff.byCategory[category],
     false,
   ));
   const none = rows.length === 0
@@ -129,7 +129,7 @@ function tableView(entries, first, second) {
         '<th scope="col" class="compare-difference">Difference</th>' +
       '</tr></thead>' +
       '<tbody>' +
-        row('Total', 'data-compare-total', result.first.total, result.second.total, result.difference.total, true) +
+        row('Total', 'data-compare-total', result.a.total, result.b.total, result.diff.total, true) +
         rows.join('') +
       '</tbody>' +
     '</table>' +
