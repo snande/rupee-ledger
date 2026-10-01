@@ -334,12 +334,20 @@ label {
   color: var(--color-ink);
 }
 
+/* A row whose picker is open wraps, so the picker drops under the chip at
+   full width; rows without one lay out exactly as before. */
+.entry-row-picking {
+  flex-wrap: wrap;
+}
+
 /* The picker: a card that opens inside its row, under the chip, one tap per
    category. It is in flow, so it takes real height and no sticky bar can
    clip it; it has no max-height, so every name is always shown. Scrolling it
    into view stops short of the sticky entry box and tab bar by their
    clearance: the screen sets --sticky-bottom-clearance from their measured
-   heights, and the token sum below stands in until it does. */
+   heights (border-box, so the tab bar's safe-area padding is included), and
+   the token sum below, which adds the safe-area inset itself, stands in
+   until it does. */
 .category-picker {
   display: grid;
   flex: 0 0 100%;

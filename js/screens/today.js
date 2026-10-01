@@ -113,7 +113,7 @@ function entryRow(entry, newestId, picking) {
   const id = escapeHtml(entry.id);
   const category = categoryOf(entry);
   const open = sameId(entry.id, picking);
-  return '<li class="entry-row' + (isNew ? ' entry-new' : '') + '">' +
+  return '<li class="entry-row' + (open ? ' entry-row-picking' : '') + (isNew ? ' entry-new' : '') + '">' +
     note +
     '<span class="amount entry-amount">' + formatPaise(entry.amountPaise) + '</span>' +
     '<button type="button" class="category-chip" data-action="open-category" data-entry-id="' + id + '" ' +
@@ -461,16 +461,21 @@ export function mountToday({
   }
 
   /* The height the sticky entry box and tab bar take off the bottom of the
-     screen, measured, or null when they cannot be measured. */
+     screen, measured border-box so the safe-area padding is in it; null when
+     none can be measured, so the CSS token fallback stays in force. */
   function stickyClearance() {
     const doc = view.ownerDocument;
     if (!doc || typeof doc.querySelector !== 'function') return null;
     let total = 0;
+    let found = false;
     for (const selector of ['.today-entry', '.tab-bar']) {
       const bar = doc.querySelector(selector);
-      if (bar && typeof bar.getBoundingClientRect === 'function') total += bar.getBoundingClientRect().height;
+      if (bar && typeof bar.getBoundingClientRect === 'function') {
+        total += bar.getBoundingClientRect().height;
+        found = true;
+      }
     }
-    return total;
+    return found && total > 0 ? total : null;
   }
 
   /* Scrolls the open picker just enough that all of it is on screen; focus
