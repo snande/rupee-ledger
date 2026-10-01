@@ -1,5 +1,6 @@
 /*
- * Offline startup: registers the service worker (sw.js at the site root) so
+ * Offline startup: registers the service worker (sw.js next to index.html,
+ * by a URL relative to the page) so
  * the app shell opens with no network, and asks the browser to keep this
  * site's storage so the on-device ledger is not evicted under storage
  * pressure.
