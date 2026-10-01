@@ -113,7 +113,7 @@ function entryRow(entry, newestId, picking) {
   const id = escapeHtml(entry.id);
   const category = categoryOf(entry);
   const open = sameId(entry.id, picking);
-  return '<li class="entry-row' + (isNew ? ' entry-new' : '') + '">' +
+  return '<li class="entry-row' + (open ? ' entry-row-picking' : '') + (isNew ? ' entry-new' : '') + '">' +
     note +
     '<span class="amount entry-amount">' + formatPaise(entry.amountPaise) + '</span>' +
     '<button type="button" class="category-chip" data-action="open-category" data-entry-id="' + id + '" ' +
@@ -460,12 +460,33 @@ export function mountToday({
     showPicker();
   }
 
+  /* The height the sticky entry box and tab bar take off the bottom of the
+     screen, measured border-box so the safe-area padding is in it; null when
+     none can be measured, so the token value stays in force. */
+  function stickyClearance() {
+    const doc = view.ownerDocument;
+    if (!doc || typeof doc.querySelector !== 'function') return null;
+    let total = 0;
+    let found = false;
+    for (const selector of ['.today-entry', '.tab-bar']) {
+      const bar = doc.querySelector(selector);
+      if (bar && typeof bar.getBoundingClientRect === 'function') {
+        total += bar.getBoundingClientRect().height;
+        found = true;
+      }
+    }
+    return found && total > 0 ? total : null;
+  }
+
   /* Scrolls the open picker just enough that all of it is on screen; focus
      alone only brings the current name into view. */
   function showPicker() {
     if (!isCurrent() || typeof view.querySelector !== 'function') return;
     const picker = view.querySelector('.category-picker');
-    if (picker && typeof picker.scrollIntoView === 'function') picker.scrollIntoView({ block: 'nearest' });
+    if (!picker) return;
+    const clearance = stickyClearance();
+    if (clearance !== null && picker.style) picker.style.setProperty('--sticky-bottom-clearance', clearance + 'px');
+    if (typeof picker.scrollIntoView === 'function') picker.scrollIntoView({ block: 'nearest' });
   }
 
   /* Closes the picker, if open, changing nothing. `refocus` puts focus back

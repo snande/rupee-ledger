@@ -68,6 +68,10 @@
   --tab-bar-height: var(--control-min-height);
   --tab-indicator-width: var(--focus-ring-width);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  /* What the sticky entry box and tab bar cover at the bottom of the screen;
+     the Today screen overrides it on an open picker with their measured
+     heights. */
+  --sticky-bottom-clearance: calc(var(--control-min-height) * 2 + var(--tab-bar-height) + var(--border-hairline) + var(--safe-area-bottom));
   --layer-frame: 1;                                             /* bars above scrolling content */
   --layer-popover: 2;                                           /* menus above the bars */
 

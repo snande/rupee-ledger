@@ -731,37 +731,69 @@ test('the picker styles hold no quoted or raw value, only tokens', async () => {
   }
 });
 
-test('the picker sits above the sticky bars and is never cut short, so Other shows', async () => {
+test('the picker sits in flow, its row wraps, and it is never cut short, so Other shows', async () => {
   const css = (await readFile(new URL('../../css/controls.css', import.meta.url), 'utf8'))
     .replace(/\/\*[\s\S]*?\*\//g, '');
   const tokens = await readFile(new URL('../../css/tokens.css', import.meta.url), 'utf8');
   const rule = (selector) => css.match(new RegExp('(?:^|})\\s*' + selector.replace('.', '\\.') + '\\s*\\{([^}]*)\\}'))[1];
-  const layer = (name) => Number(tokens.match(new RegExp(name + ':\\s*(\\d+);'))[1]);
-  const zOf = (selector) => layer(rule(selector).match(/z-index:\s*var\((--[\w-]+)\)/)[1]);
   const picker = rule('.category-picker');
-  assert.match(picker, /z-index:\s*var\(--layer-popover\)/);
-  for (const bar of ['.today-entry', '.tab-bar']) {
-    assert.ok(zOf('.category-picker') > zOf(bar), 'the picker draws over ' + bar);
+  assert.doesNotMatch(picker, /position:\s*absolute/, 'the picker is in flow, not floating under the bars');
+  assert.match(picker, /flex:\s*0 0 100%/);
+  assert.match(rule('.entry-row-picking'), /flex-wrap:\s*wrap/, 'the open row wraps so the picker sits under the chip');
+  assert.doesNotMatch(rule('.entry-row'), /flex-wrap/, 'rows without a picker lay out as before');
+  assert.match(picker, /scroll-margin-bottom:\s*var\(--sticky-bottom-clearance\)/, 'it scrolls clear of the sticky bars');
+  const clearance = tokens.match(/--sticky-bottom-clearance:\s*([^;]*);/)[1];
+  for (const part of ['--tab-bar-height', '--safe-area-bottom', '--border-hairline']) {
+    assert.ok(clearance.includes(part), 'the fallback clearance counts ' + part);
   }
   assert.doesNotMatch(picker, /max-height|overflow/, 'no name is clipped or scrolled away');
 });
 
-test('opening the picker lists Other last and scrolls the whole picker into view', async () => {
+/* Opens the picker on a screen whose document holds the given bar heights
+   (a missing name is a bar that is not there) and reports what was set and
+   scrolled, in order. */
+async function openPickerWith(bars, { withDocument = true } = {}) {
   const screen = fakeScreen();
-  const scrolled = [];
+  const log = [];
   const find = screen.view.querySelector;
+  if (withDocument) {
+    screen.view.ownerDocument = {
+      querySelector: (selector) => (selector in bars ? { getBoundingClientRect: () => ({ height: bars[selector] }) } : null),
+    };
+  }
   screen.view.querySelector = (selector) => ({
     ...find(selector),
-    scrollIntoView: (options) => scrolled.push([selector, options]),
+    style: { setProperty: (name, value) => log.push([name, value]) },
+    scrollIntoView: (options) => log.push([selector, options]),
   });
   const { ledger, load } = memoryLedger([chai()]);
   await mountToday({ main: screen.main, ledger, load });
   tapChip(screen.view, 7);
+  return { screen, log };
+}
+
+test('opening the picker lists Other last, clears the sticky bars and scrolls the whole picker into view', async () => {
+  const { screen, log } = await openPickerWith({ '.today-entry': 120, '.tab-bar': 49 });
   const names = pickerOptions(screen.view.innerHTML).map(([name]) => name);
   assert.deepEqual(names, CATEGORIES);
   assert.equal(names.at(-1), 'Other');
-  assert.deepEqual(scrolled, [['.category-picker', { block: 'nearest' }]]);
+  assert.match(screen.view.innerHTML, /class="entry-row entry-row-picking/);
+  assert.deepEqual(log, [
+    ['--sticky-bottom-clearance', '169px'],
+    ['.category-picker', { block: 'nearest' }],
+  ], 'clearance is the measured entry box plus tab bar, set before scrolling');
   assert.equal(screen.view.focused, '.category-option-current', 'focus stays on the current name');
+});
+
+test('one sticky bar missing still clears the other; none, or no document, leaves the token value', async () => {
+  const partial = await openPickerWith({ '.tab-bar': 49 });
+  assert.deepEqual(partial.log[0], ['--sticky-bottom-clearance', '49px']);
+  const none = await openPickerWith({});
+  assert.deepEqual(none.log, [['.category-picker', { block: 'nearest' }]], 'no bars found: property not set');
+  const zero = await openPickerWith({ '.today-entry': 0, '.tab-bar': 0 });
+  assert.deepEqual(zero.log, [['.category-picker', { block: 'nearest' }]], 'a zero sum never overrides the token');
+  const noDoc = await openPickerWith({}, { withDocument: false });
+  assert.deepEqual(noDoc.log, [['.category-picker', { block: 'nearest' }]], 'no document: property not set');
 });
 
 test('the arrow keys, Home and End move focus through the picker', async () => {
