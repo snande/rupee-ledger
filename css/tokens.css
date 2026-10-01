@@ -13,6 +13,17 @@
   --color-haldi: #D98E04;   /* accent: primary action, focus ring, active tab */
   --color-sindoor: #C2412D; /* danger: delete, failed import, increase */
 
+  /* Chart: the category colours for the Month donut, largest slice first,
+     drawn from the palette and muted neighbours of it. A month with more
+     categories than colours starts the set again. */
+  --chart-1: var(--color-haldi);
+  --chart-2: #2F6F73;       /* deep teal */
+  --chart-3: var(--color-sindoor);
+  --chart-4: #5B6BA8;       /* indigo */
+  --chart-5: #7A9A3A;       /* leaf */
+  --chart-6: #9C5A8A;       /* plum */
+  --chart-7: var(--color-muted);
+
   /* Typefaces: the brief's face first, then a system fallback. Nothing is
      fetched remotely, so the app stays fully offline. */
   --font-ui: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;

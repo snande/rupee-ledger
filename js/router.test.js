@@ -14,6 +14,7 @@ import {
 } from './router.js';
 import { mountToday, renderToday } from './screens/today.js';
 import { mountCompare, renderCompare } from './screens/compare.js';
+import { mountMonth, renderMonth } from './screens/month.js';
 import { renderNotFound, renderScreenError } from './screens/not-found.js';
 
 /* Screens under test here render without their mount, so no data loads. */
@@ -82,6 +83,30 @@ test('the Compare tab in index.html links to the compare route', async () => {
   const { readFile } = await import('node:fs/promises');
   const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
   assert.match(html, /<a class="tab" href="#\/compare" data-route="compare">Compare<\/a>/);
+});
+
+test('the routes table maps month to the Month screen and its mount', () => {
+  assert.equal(routes.month, renderMonth);
+  assert.equal(mounts.month, mountMonth);
+  for (const hash of ['#/month', '#/month/', '#month']) {
+    assert.deepEqual(resolveRoute(hash), { name: 'month', render: renderMonth }, hash);
+  }
+});
+
+test('renderRoute puts the Month screen into main for #/month, not Not found', () => {
+  const main = fakeElement();
+  const month = fakeElement({ 'data-route': 'month' });
+  const route = renderRoute({ main, links: [month], hash: '#/month', mountTable: noMounts });
+  assert.equal(route.name, 'month');
+  assert.match(main.innerHTML, /<div class="month"/);
+  assert.doesNotMatch(main.innerHTML, /not-found/);
+  assert.equal(month.getAttribute('aria-current'), 'page');
+});
+
+test('the Month tab in index.html links to the month route', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const html = await readFile(new URL('../index.html', import.meta.url), 'utf8');
+  assert.match(html, /<a class="tab" href="#\/month" data-route="month">Month<\/a>/);
 });
 
 test('a query after the path keeps the route and is parsed apart', () => {

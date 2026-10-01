@@ -293,6 +293,7 @@ test('every tap target on the screen is at least 44 by 44 CSS pixels', async () 
   assert.match(rule('.category-chip'), /min-height: var\(--control-min-height\)/);
   assert.match(rule('.category-chip'), /min-width: var\(--control-min-height\)/);
   assert.match(rule('.category-option'), /min-height: var\(--control-min-height\)/);
+  assert.match(rule('.total-link'), /min-height: var\(--control-min-height\)/);
   assert.ok(px('--control-min-height') >= 44);
   assert.equal(px('--quick-entry-height'), 56);
 });
@@ -502,6 +503,14 @@ test('an empty ledger shows both totals as ₹0, labelled Today and This month',
   assert.match(html, /<span class="total-label">Today<\/span><span class="amount total-amount" data-today-total>/);
   assert.match(html, /<span class="total-label">This month<\/span><span class="amount total-amount" data-month-total>/);
   assert.ok(html.indexOf('today-totals') < html.indexOf('today-empty'), 'totals sit above the prompt');
+});
+
+test('the This month card links to the Month screen in every state', () => {
+  for (const status of ['empty', 'loading', 'error', 'filled']) {
+    const html = renderTodayView({ status, entries: status === 'filled' ? sample : [] });
+    assert.equal((html.match(/<a class="total-link" href="#\/month" data-month-link>/g) ?? []).length, 1, status);
+  }
+  assert.match(renderToday({ status: 'empty' }), /href="#\/month"/);
 });
 
 test('the total cards come first in every state and never show NaN or undefined', () => {
