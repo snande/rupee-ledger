@@ -160,6 +160,59 @@ test('an exported record with amountPaise and no amount imports, never "non-nume
   });
 });
 
+/* Test #91, from the file side: the exact text Export backup writes on
+   phone A, kept as a literal rather than rebuilt with serializeBackup.
+   Entries typed into the quick-entry box are stored by add() with
+   `amountPaise` and no `amount`; an older phone's addEntry() record holds
+   paise in `amount` and has no schemaVersion. Both import, and nothing
+   reads an amount as undefined. */
+test('a backup file exactly as phone A exports it imports in full, and a second import adds 0', async () => {
+  const time = (day, hour) => new Date(2026, 8, day, hour).getTime();
+  const file = `{
+  "format": "rupee-ledger-backup",
+  "version": 1,
+  "exportedAt": "2026-09-30T14:30:00.000Z",
+  "entries": [
+    {
+      "schemaVersion": 1,
+      "amountPaise": 12000,
+      "note": "chai",
+      "category": "Food",
+      "createdAt": ${time(30, 9)},
+      "id": 1
+    },
+    {
+      "schemaVersion": 1,
+      "amountPaise": 4550,
+      "note": "auto",
+      "category": "Transport",
+      "createdAt": ${time(30, 10)},
+      "id": 2
+    },
+    {
+      "amount": 25000,
+      "note": "groceries",
+      "category": "",
+      "createdAt": ${time(12, 18)},
+      "id": 3
+    }
+  ]
+}
+`;
+  const { entries } = parseBackup(file);
+  assert.deepEqual(await previewImport(store, entries), { added: 3, skipped: 0 });
+  assert.deepEqual(await importEntries(store, entries), { added: 3, skipped: 0 });
+  assert.deepEqual(
+    storedRecords().map((r) => [r.schemaVersion, r.amountPaise, r.note, r.category]),
+    [[1, 12000, 'chai', 'Food'], [1, 4550, 'auto', 'Transport'], [1, 25000, 'groceries', 'Shopping']],
+  );
+  assert.deepEqual(storeTotals(), { today: 16550, month: 41550 });
+
+  assert.deepEqual(await importEntries(store, parseBackup(file).entries), { added: 0, skipped: 3 });
+  assert.equal(storedRecords().length, 3);
+  assert.deepEqual(storeTotals(), { today: 16550, month: 41550 });
+});
+
 test('stored-shape entries: createdAt may be a number or an ISO string; bad amounts are refused', async () => {
   const v = (entry) => backupText([{ schemaVersion: 1, note: 'x', createdAt: 1, ...entry }]);
   const iso = parseBackup(v({ amountPaise: 500, createdAt: at(3, 9) })).entries;

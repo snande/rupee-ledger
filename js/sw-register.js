@@ -5,14 +5,16 @@
  * site's storage so the on-device ledger is not evicted under storage
  * pressure.
  *
- * sw.js answers cache-first, so the page a phone opens is built from the
- * files of the worker that controlled it at load. When a deploy ships a new
- * sw.js, the new worker installs, skips waiting and claims the page, but the
- * modules already running are still the old ones: an installed phone kept
- * running an old src/backup-import.js that refused every backup with "has a
- * non-numeric amount: undefined". So when a new worker takes control of a
- * page that already had one, the page reloads once, onto the new files. A
- * first install (no controller yet) reloads nothing: those files are new.
+ * sw.js refreshes the app's files from the network each time the app is
+ * opened online, so a page is built from the deployed files and the cache
+ * only stands in offline or on a slow network. The worker it replaces
+ * answered cache-first: an installed phone kept running an old
+ * src/backup-import.js that refused every backup with "has a non-numeric
+ * amount: undefined". A page loaded by such a worker is still running its
+ * old modules when the new worker installs, skips waiting and claims it, so
+ * when a new worker takes control of a page that already had one, the page
+ * reloads once, onto the new files. A first install (no controller yet)
+ * reloads nothing: those files are new.
  * Registration also asks the browser to check for a new sw.js now, rather
  * than only on a later navigation.
  *
