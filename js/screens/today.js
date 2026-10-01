@@ -126,7 +126,7 @@ function entryRow(entry, newestId, picking) {
 /* One total card: a 12px muted label above a 28px mono amount. `known` is
    'yes' once a load has succeeded; 'pending' draws a skeleton bar while the
    first load runs, and 'no' a dash after a failed one. */
-function totalCard(key, label, paise, known) {
+function totalCard(key, label, paise, known, extra = '') {
   let value;
   if (known === 'pending') {
     value = '<span class="skeleton-bar total-skeleton" aria-hidden="true"></span>';
@@ -139,8 +139,12 @@ function totalCard(key, label, paise, known) {
   return '<p class="card total-card' + (key === 'today' ? ' total-card-today' : '') + '">' +
     '<span class="total-label">' + label + '</span>' +
     value +
+    extra +
   '</p>';
 }
+
+/* The This month card's way into the Month screen's chart. */
+const MONTH_LINK = '<a class="total-link" href="#/month" data-month-link>See this month</a>';
 
 /* The Today and This month cards, side by side at the top of the screen and
    shown in every state, summed with totals() from src/totals.js. */
@@ -148,7 +152,7 @@ export function totalsView(entries, now = new Date(), known = 'yes') {
   const sums = totals(entries, now);
   return '<section class="today-totals" aria-label="Totals"' + (known === 'pending' ? ' aria-busy="true"' : '') + '>' +
     totalCard('today', 'Today', sums.today, known) +
-    totalCard('month', 'This month', sums.month, known) +
+    totalCard('month', 'This month', sums.month, known, MONTH_LINK) +
   '</section>';
 }
 
