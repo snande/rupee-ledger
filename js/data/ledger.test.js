@@ -2,7 +2,7 @@ import { test, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { fromRecord, isDemo, ledgerFor, loadEntries } from './ledger.js';
+import { categoryOf, fromRecord, isDemo, ledgerFor, loadEntries } from './ledger.js';
 import { mountToday } from '../screens/today.js';
 import { add, closeLedger } from '../../src/ledger.js';
 import { addEntry, updateCategory } from '../../src/ledger/store.js';
@@ -207,9 +207,17 @@ test('the module is offline and shows no currency but ₹', async () => {
   assert.doesNotMatch(source, /[$€£¥₩₽¢]|\bUSD\b|\bINR\b|\bRs\.?\s/);
 });
 
+test('one rule reads an entry\'s category: the one it carries if known, else its note\'s', () => {
+  assert.equal(categoryOf({ note: 'chai', category: 'Bills' }), 'Bills');
+  assert.equal(categoryOf({ note: 'chai' }), 'Food');
+  assert.equal(categoryOf({ note: 'chai', category: '' }), 'Food', 'a free-form blank from addEntry');
+  assert.equal(categoryOf({ note: 'chai', category: 'Snacks' }), 'Food');
+  assert.equal(categoryOf({}), 'Other');
+  assert.equal(fromRecord({ id: 1, amountPaise: 100, note: 'auto', category: '', createdAt: 1 }).category, 'Transport');
+});
+
 test('the Today screen changes a category through the store update', () => {
-  const ledger = ledgerFor(query(''));
-  assert.equal(ledger.updateCategory, updateCategory);
+  assert.equal(ledgerFor(query('')).updateCategory, updateCategory);
 });
 
 test('end to end: tapping a chip then a category stores it, and a reload shows it', async () => {

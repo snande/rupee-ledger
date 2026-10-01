@@ -20,14 +20,14 @@
  * currency sign anywhere in this file is ₹.
  */
 
-import { categorise, CATEGORIES } from '../../src/categorise.js';
+import { CATEGORIES } from '../../src/categorise.js';
 import { formatPaise } from '../../src/format-amount.js';
 import { parseEntry } from '../../src/parse-entry.js';
 import { INVALID_HINT, showHint, spendLabel, wireQuickEntry } from '../../src/quick-entry.js';
 import { totals } from '../../src/totals.js';
-import { ledgerFor, loadEntries } from '../data/ledger.js';
+import { categoryOf, ledgerFor, loadEntries } from '../data/ledger.js';
 
-export { CATEGORIES, formatPaise, INVALID_HINT };
+export { CATEGORIES, categoryOf, formatPaise, INVALID_HINT };
 
 export const STATUSES = ['empty', 'loading', 'error', 'filled'];
 export const ERROR_MESSAGE = 'Today’s spends did not open.';
@@ -78,23 +78,24 @@ export function shownStatus(state = {}) {
   return listed.length > 0 ? 'filled' : status === 'filled' ? 'empty' : status;
 }
 
-/* The entry's category: the one it carries, or for one without a known
-   category the one its note maps to, as the ledger reads old records. */
-export function categoryOf(entry) {
-  return CATEGORIES.includes(entry?.category) ? entry.category : categorise(entry?.note);
+/* True when both ids are set and name the same spend. Ids from the ledger
+   are numbers and come back from the page's data attributes as strings. */
+export function sameId(a, b) {
+  return a !== undefined && a !== null && b !== undefined && b !== null && String(a) === String(b);
 }
 
-const isPicking = (entry, picking) => picking !== undefined && picking !== null && String(entry.id) === String(picking);
-
-/* The picker under a chip: one button per name in CATEGORIES, the current
-   one marked. A tap on one saves it; there is no Save button. */
+/* The picker under a chip: a listbox with one option per name in
+   CATEGORIES, the current one marked and the one Tab reaches; the arrow
+   keys, Home and End move between the rest. A tap on one saves it; there is
+   no Save button. */
 function pickerView(entry, current) {
   const id = escapeHtml(entry.id);
   const options = CATEGORIES.map((name) => {
     const selected = name === current;
     return '<li role="none">' +
       '<button type="button" class="category-option' + (selected ? ' category-option-current' : '') + '" role="option" ' +
-        'aria-selected="' + selected + '" data-action="pick-category" data-entry-id="' + id + '" data-category="' + escapeHtml(name) + '">' +
+        'aria-selected="' + selected + '" tabindex="' + (selected ? '0' : '-1') + '" ' +
+        'data-action="pick-category" data-entry-id="' + id + '" data-category="' + escapeHtml(name) + '">' +
         escapeHtml(name) +
       '</button>' +
     '</li>';
@@ -110,7 +111,7 @@ function entryRow(entry, newestId, picking) {
     : '<span class="entry-note entry-note-empty">No note</span>';
   const id = escapeHtml(entry.id);
   const category = categoryOf(entry);
-  const open = isPicking(entry, picking);
+  const open = sameId(entry.id, picking);
   return '<li class="entry-row' + (isNew ? ' entry-new' : '') + '">' +
     note +
     '<span class="amount entry-amount">' + formatPaise(entry.amountPaise) + '</span>' +
@@ -244,7 +245,9 @@ export function renderToday(state = { status: 'loading' }) {
  * writes it with the ledger's updateCategory() without waiting; a write that
  * fails puts the old category back and says so. A spend whose own save is
  * still in flight gets its category written once that save resolves.
- * Escape, or a tap outside the picker, closes it and changes nothing.
+ * Escape, or a tap outside the picker, closes it and changes nothing. The
+ * picker also goes, with its document listeners, once its spend is no
+ * longer listed or the router has replaced the screen.
  * `ledger` defaults to src/ledger.js, or on a demo visit to one that stores
  * nothing. isCurrent() turns false once the router has replaced this screen,
  * so a late load writes nothing. Returns the first load's promise, which
@@ -275,8 +278,41 @@ export function mountToday({
   let addedCount = 0;
   let picking = null;
 
+  const findEntry = (id) => added.concat(loaded).find((entry) => sameId(entry.id, id));
+
+  /* While the picker is open, Escape anywhere or a tap outside the Today
+     view closes it; taps and keys inside the view are handled further down.
+     Both handlers let go of the document once the screen is gone. */
+  const doc = globalThis.document;
+  function onDocumentKey(event) {
+    if (!isCurrent() || event.key === 'Escape') closePicker(true);
+  }
+  function onDocumentPointer(event) {
+    if (isCurrent() && typeof view.contains === 'function' && view.contains(event.target)) return;
+    closePicker(false);
+  }
+  function listen(on) {
+    if (!doc || typeof doc.addEventListener !== 'function') return;
+    const method = on ? 'addEventListener' : 'removeEventListener';
+    doc[method]('keydown', onDocumentKey);
+    doc[method]('pointerdown', onDocumentPointer);
+  }
+
+  /* Forgets the open picker, without drawing. */
+  function dropPicker() {
+    picking = null;
+    listen(false);
+  }
+
   const show = () => {
-    if (!isCurrent()) return;
+    if (!isCurrent()) {
+      if (picking !== null) dropPicker();
+      return;
+    }
+    if (picking !== null) {
+      const open = findEntry(picking);
+      if (!open || !isToday(open)) dropPicker();
+    }
     const state = { status, entries: added.concat(loaded), newestId, picking };
     if (root) root.setAttribute('data-status', shownStatus(state));
     view.innerHTML = renderTodayView(state);
@@ -304,16 +340,15 @@ export function mountToday({
     return added.length !== before;
   };
 
-  const sameId = (a, b) => a !== undefined && a !== null && b !== undefined && b !== null && String(a) === String(b);
-
-  const findEntry = (id) => added.concat(loaded).find((entry) => sameId(entry.id, id));
-
-  /* Sets the category on screen of the spend with this id: in place on a
-     spend added here, whose save may still be in flight, and on a copy of a
-     loaded one. */
-  const setCategory = (id, category) => {
-    for (const entry of added) if (sameId(entry.id, id) || sameId(entry.ledgerId, id)) entry.category = category;
-    loaded = loaded.map((entry) => (sameId(entry.id, id) ? { ...entry, category } : entry));
+  /* Sets a spend's category on screen: in place on a spend added here,
+     whose save may still be in flight, and on a copy of a loaded one. Rows
+     are matched by the screen id and the ledger id alike, so a stored copy
+     listed before its added row settles changes with it. */
+  const setCategory = (entry, category) => {
+    const ids = [entry.id, entry.ledgerId];
+    const matches = (item) => ids.some((id) => sameId(item.id, id) || sameId(item.ledgerId, id));
+    for (const item of added) if (matches(item)) item.category = category;
+    loaded = loaded.map((item) => (matches(item) ? { ...item, category } : item));
   };
 
   /* Writes a picked category to the ledger. A write that fails puts back
@@ -329,8 +364,7 @@ export function mountToday({
     writing.catch(() => {
       const shown = findEntry(entry.id) ?? findEntry(ledgerId);
       if (!shown || categoryOf(shown) !== category) return;
-      setCategory(entry.id, before);
-      setCategory(ledgerId, before);
+      setCategory({ id: entry.id, ledgerId }, before);
       show();
       if (isCurrent()) announce('The category for ' + spendLabel(entry) + ' was not saved.');
     });
@@ -340,7 +374,7 @@ export function mountToday({
      when its write settles. */
   function draw({ amountPaise, note, createdAt }, text) {
     addedCount += 1;
-    const entry = { id: 'added-' + addedCount, amountPaise, note, category: categorise(note), timestamp: createdAt };
+    const entry = { id: 'added-' + addedCount, amountPaise, note, category: categoryOf({ note }), timestamp: createdAt };
     added = [entry].concat(added);
     newestId = entry.id;
     show();
@@ -405,31 +439,16 @@ export function mountToday({
     );
   }
 
-  /* The category picker. While it is open, Escape anywhere or a tap outside
-     the Today view closes it; taps inside the view are handled below. */
-  const doc = globalThis.document;
   const escapeSelector = (value) => String(value).replace(/["\\]/g, (char) => '\\' + char);
   const focusIn = (selector) => {
     if (!isCurrent() || typeof view.querySelector !== 'function') return;
     view.querySelector(selector)?.focus();
   };
-  const onDocumentKey = (event) => {
-    if (event.key === 'Escape') closePicker(true);
-  };
-  const onDocumentPointer = (event) => {
-    if (typeof view.contains === 'function' && view.contains(event.target)) return;
-    closePicker(false);
-  };
-  const listen = (on) => {
-    if (!doc || typeof doc.addEventListener !== 'function') return;
-    const method = on ? 'addEventListener' : 'removeEventListener';
-    doc[method]('keydown', onDocumentKey);
-    doc[method]('pointerdown', onDocumentPointer);
-  };
 
   function openPicker(id) {
     picking = String(id);
     show();
+    if (picking === null) return;
     listen(true);
     focusIn('.category-option-current');
   }
@@ -439,8 +458,7 @@ export function mountToday({
   function closePicker(refocus) {
     if (picking === null) return;
     const id = picking;
-    picking = null;
-    listen(false);
+    dropPicker();
     show();
     if (refocus) focusIn('.category-chip[data-entry-id="' + escapeSelector(id) + '"]');
   }
@@ -453,12 +471,28 @@ export function mountToday({
       return;
     }
     const before = categoryOf(entry);
-    setCategory(entry.id, category);
+    setCategory(entry, category);
     closePicker(true);
     announce('Category set to ' + category);
     /* A spend added here whose save has not resolved is written by saved(). */
     if (added.includes(entry) && entry.ledgerId === undefined) return;
     writeCategory(entry, entry.ledgerId ?? entry.id, category, before);
+  }
+
+  /* Arrow keys, Home and End move focus through the open picker's options. */
+  function moveFocus(event) {
+    const steps = { ArrowDown: 1, ArrowUp: -1, Home: 'first', End: 'last' };
+    const step = steps[event.key];
+    if (step === undefined) return false;
+    const from = event.target && typeof event.target.getAttribute === 'function'
+      ? CATEGORIES.indexOf(event.target.getAttribute('data-category'))
+      : -1;
+    const count = CATEGORIES.length;
+    const next = step === 'first' ? 0
+      : step === 'last' ? count - 1
+        : from === -1 ? 0 : (from + step + count) % count;
+    focusIn('.category-option[data-category="' + escapeSelector(CATEGORIES[next]) + '"]');
+    return true;
   }
 
   wireQuickEntry({
@@ -492,7 +526,7 @@ export function mountToday({
     else if (action === 'focus-entry') input.focus();
     else if (action === 'open-category') {
       const id = target.getAttribute('data-entry-id');
-      if (picking === id) closePicker(true);
+      if (sameId(picking, id)) closePicker(true);
       else openPicker(id);
     } else if (action === 'pick-category') {
       pick(target.getAttribute('data-entry-id'), target.getAttribute('data-category'));
@@ -502,9 +536,11 @@ export function mountToday({
   });
 
   view.addEventListener('keydown', (event) => {
-    if (event.key !== 'Escape' || picking === null) return;
-    if (typeof event.preventDefault === 'function') event.preventDefault();
-    closePicker(true);
+    if (picking === null) return;
+    let handled = true;
+    if (event.key === 'Escape') closePicker(true);
+    else handled = moveFocus(event);
+    if (handled && typeof event.preventDefault === 'function') event.preventDefault();
   });
 
   input.focus();

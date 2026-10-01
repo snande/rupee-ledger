@@ -2,8 +2,8 @@
  * Demo data source for the Today screen. js/data/ledger.js sends a visit here
  * when its query names a state, so each screen state can be shown on demand.
  * The boundary is one function returning a Promise of entries, each
- * { id, amountPaise, note, category, timestamp }; the sample entries are dated at the
- * moment they load, so they count as today's. Nothing here is stored.
+ * { id, amountPaise, note, category, timestamp }; the sample entries are
+ * dated at the moment they load, so they count as today's. Nothing here is stored.
  *
  * The `state` query parameter forces a screen state for demos, e.g.
  * '#/today?state=filled':

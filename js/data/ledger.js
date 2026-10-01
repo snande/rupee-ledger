@@ -15,7 +15,7 @@
  * so each screen state can be shown on demand; those visits store nothing.
  */
 
-import { categorise } from '../../src/categorise.js';
+import { categorise, CATEGORIES } from '../../src/categorise.js';
 import * as ledger from '../../src/ledger.js';
 import { updateCategory } from '../../src/ledger/store.js';
 import { currentQuery, requestedState, loadEntries as loadStubEntries } from './stub.js';
@@ -25,15 +25,22 @@ export function isDemo(query = currentQuery()) {
   return requestedState(query) !== null;
 }
 
-/* A stored record as the screen sees it. A record from before categories
-   existed reads with categorise(note), as the ledger's own reads do. */
+/* An entry's category: the one it carries, or for one without a known
+   category (a record from before categories existed) the one its note maps
+   to, as the ledger's own reads do. The one rule for this, shared by the
+   load below and the Today screen's chips. */
+export function categoryOf(entry) {
+  return CATEGORIES.includes(entry?.category) ? entry.category : categorise(entry?.note ?? '');
+}
+
+/* A stored record as the screen sees it. */
 export function fromRecord(record) {
   const note = record.note ?? '';
   return {
     id: record.id,
     amountPaise: record.amountPaise,
     note,
-    category: record.category ?? categorise(note),
+    category: categoryOf({ category: record.category, note }),
     timestamp: record.createdAt,
   };
 }
