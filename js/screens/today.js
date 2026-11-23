@@ -26,6 +26,7 @@ import { formatPaise } from '../../src/format-amount.js';
 import { parseEntry } from '../../src/parse-entry.js';
 import { INVALID_HINT, showHint, spendLabel, wireQuickEntry } from '../../src/quick-entry.js';
 import { totals } from '../../src/totals.js';
+import { exportMonthCsv } from '../data/export-month-csv.js';
 import { categoryOf, ledgerFor, loadEntries } from '../data/ledger.js';
 
 export { CATEGORIES, categoryOf, formatPaise, INVALID_HINT };
@@ -36,6 +37,8 @@ export const ENTRY_HINT = 'Amount first, then what it was for';
 export const EXPORT_LABEL = 'Export backup';
 export const IMPORT_LINK_LABEL = 'Import backup';
 export const EXPORT_ERROR = 'The backup was not made: your spends could not be read. Nothing was downloaded.';
+export const EXPORT_CSV_LABEL = 'Export CSV';
+export const EXPORT_CSV_ERROR = 'The CSV was not made: your spends could not be read. Nothing was downloaded.';
 
 const SKELETON_ROWS = 3;
 
@@ -220,12 +223,14 @@ export function renderTodayView(state = {}) {
 }
 
 /* The Export backup control: a quiet secondary button below the spends,
-   outside the view that re-renders and apart from the entry box, the
-   line that says when a backup could not be made, and a link to the Backup
-   screen, where a backup file is imported. */
+   outside the view that re-renders and apart from the entry box, an
+   Export CSV button beside it, the line that says when a backup or CSV
+   could not be made, and a link to the Backup screen, where a backup file
+   is imported. */
 export function backupView() {
   return '<section class="today-backup" aria-label="Backup">' +
     '<button type="button" class="button-secondary today-export" data-export-backup>' + EXPORT_LABEL + '</button>' +
+    '<button type="button" class="button-secondary today-export" data-export-csv>' + EXPORT_CSV_LABEL + '</button>' +
     '<p class="hint hint-error today-export-status" role="alert" data-export-status hidden></p>' +
     '<a class="today-import-link" href="#/backup">' + IMPORT_LINK_LABEL + '</a>' +
   '</section>';
@@ -279,6 +284,10 @@ export function renderToday(state = { status: 'loading' }) {
  * exportBackup() in src/backup-download.js, which downloads the dated JSON
  * file on the phone with no network; a read that fails downloads nothing
  * and shows EXPORT_ERROR under the button.
+ * Export CSV does the same with `csv`, by default exportMonthCsv() in
+ * js/data/export-month-csv.js, which runs exportCsv() from
+ * src/backup-download.js with this month's spends as the rows;
+ * a read that fails shows EXPORT_CSV_ERROR on the same line.
  * `ledger` defaults to src/ledger.js, the on-device store. isCurrent() turns false once the router has replaced this screen,
  * so a late load writes nothing. Returns the first load's promise, which
  * never rejects.
@@ -289,6 +298,7 @@ export function mountToday({
   load = loadEntries,
   ledger = ledgerFor(),
   backup = exportBackup,
+  csv = exportMonthCsv,
 }) {
   const root = main.querySelector('.today');
   const view = main.querySelector('[data-today-view]');
@@ -298,6 +308,7 @@ export function mountToday({
   const announcer = main.querySelector('[data-entry-status]');
   const exportButton = main.querySelector('[data-export-backup]');
   const exportStatus = main.querySelector('[data-export-status]');
+  const csvButton = main.querySelector('[data-export-csv]');
   if (!view || !form || !input || !hint) {
     throw new Error('The Today screen markup is incomplete.');
   }
@@ -638,6 +649,30 @@ export function mountToday({
     ).finally(() => {
       exporting = false;
       exportButton.disabled = false;
+    });
+  });
+
+  /* Export CSV: one download per tap, the button off while it runs. */
+  let exportingCsv = false;
+  csvButton?.addEventListener('click', () => {
+    if (exportingCsv) return;
+    exportingCsv = true;
+    csvButton.disabled = true;
+    showExportError('');
+    let running;
+    try {
+      running = Promise.resolve(csv());
+    } catch (error) {
+      running = Promise.reject(error);
+    }
+    return running.then(
+      () => {},
+      () => {
+        if (isCurrent()) showExportError(EXPORT_CSV_ERROR);
+      },
+    ).finally(() => {
+      exportingCsv = false;
+      csvButton.disabled = false;
     });
   });
 

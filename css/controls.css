@@ -506,7 +506,11 @@ label {
   display: none;
 }
 
+/* The Import backup link is a full-height tap target, like the buttons. */
 .today-import-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--control-min-height);
   color: var(--color-ink);
   font-size: var(--text-2);
 }
