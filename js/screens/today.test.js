@@ -21,6 +21,7 @@ import {
 import { formatPaise as sharedFormatPaise } from '../../src/format-amount.js';
 import { INVALID_HINT as QUICK_ENTRY_HINT } from '../../src/quick-entry.js';
 import { fromRecord } from '../data/ledger.js';
+import { EXPORT_CSV_ERROR, EXPORT_CSV_LABEL } from './today.js';
 
 const now = Date.now();
 const sample = [
@@ -1068,6 +1069,94 @@ test('a backup that throws at once still shows the error', async () => {
   screen.exportButton.dispatch('click');
   await tick();
   assert.equal(screen.exportStatus.textContent, EXPORT_ERROR);
+});
+
+/* The screen with both export buttons and the shared error line. */
+function fakeScreenWithCsv() {
+  const screen = fakeScreenWithExport();
+  const csvButton = fakeElement();
+  const find = screen.main.querySelector;
+  screen.main.querySelector = (selector) => (selector === '[data-export-csv]' ? csvButton : find(selector));
+  return { ...screen, csvButton };
+}
+
+test('the Backup section shows an Export CSV button after Export backup', () => {
+  const html = renderToday({ status: 'filled', entries: sample });
+  const button = '<button type="button" class="button-secondary today-export" data-export-csv>Export CSV</button>';
+  assert.equal(EXPORT_CSV_LABEL, 'Export CSV');
+  const section = html.slice(html.indexOf('<section class="today-backup"'), html.indexOf('</section>', html.indexOf('<section class="today-backup"')));
+  assert.ok(section.includes(button), 'the CSV button is in the Backup section');
+  assert.ok(section.indexOf('data-export-backup') < section.indexOf('data-export-csv'), 'it sits beside Export backup');
+  assert.ok(html.indexOf('data-export-csv') < html.indexOf('data-today-form'), 'the entry box stays last');
+  assert.doesNotMatch(renderTodayView({ status: 'filled', entries: sample }), /data-export-csv/);
+});
+
+test('Export CSV runs the CSV export once per tap and not the backup', async () => {
+  const screen = fakeScreenWithCsv();
+  let csvCalls = 0;
+  let backupCalls = 0;
+  let finish;
+  const csv = () => {
+    csvCalls += 1;
+    return new Promise((resolve) => { finish = resolve; });
+  };
+  const backup = async () => { backupCalls += 1; };
+  await mountToday({ main: screen.main, load: async () => sample, ledger: keep, backup, csv });
+  const focused = screen.input.focusCount;
+
+  screen.csvButton.dispatch('click');
+  screen.csvButton.dispatch('click');
+  assert.equal(csvCalls, 1);
+  assert.equal(screen.csvButton.disabled, true);
+  finish({ filename: 'rupee-ledger-2026-10.csv', count: 2 });
+  await tick();
+  assert.equal(screen.csvButton.disabled, false);
+  assert.equal(screen.exportStatus.getAttribute('hidden'), '');
+  assert.equal(screen.input.focusCount, focused);
+
+  screen.csvButton.dispatch('click');
+  await tick();
+  assert.equal(csvCalls, 2);
+  assert.equal(backupCalls, 0);
+
+  screen.exportButton.dispatch('click');
+  await tick();
+  assert.equal(backupCalls, 1);
+  assert.equal(csvCalls, 2);
+});
+
+test('a CSV export whose read fails shows a visible error, and the next one clears it', async () => {
+  const screen = fakeScreenWithCsv();
+  let fail = true;
+  const csv = async () => {
+    if (fail) throw new Error('The ledger read was aborted.');
+    return { filename: 'x.csv', count: 0 };
+  };
+  await mountToday({ main: screen.main, load: async () => sample, ledger: keep, csv });
+
+  screen.csvButton.dispatch('click');
+  await tick();
+  assert.equal(screen.exportStatus.textContent, EXPORT_CSV_ERROR);
+  assert.equal(screen.exportStatus.getAttribute('hidden'), null);
+  assert.equal(screen.csvButton.disabled, false);
+
+  fail = false;
+  screen.csvButton.dispatch('click');
+  await tick();
+  assert.equal(screen.exportStatus.textContent, '');
+  assert.equal(screen.exportStatus.getAttribute('hidden'), '');
+});
+
+test('a CSV export that throws at once still shows the error', async () => {
+  const screen = fakeScreenWithCsv();
+  const csv = () => {
+    throw new Error('no store');
+  };
+  await mountToday({ main: screen.main, load: async () => sample, ledger: keep, csv });
+  screen.csvButton.dispatch('click');
+  await tick();
+  assert.equal(screen.exportStatus.textContent, EXPORT_CSV_ERROR);
+  assert.equal(screen.csvButton.disabled, false);
 });
 
 /* The Export backup control's look comes only from tokens defined in
