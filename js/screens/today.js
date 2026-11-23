@@ -20,12 +20,13 @@
  * currency sign anywhere in this file is ₹.
  */
 
-import { exportBackup, exportCsv } from '../../src/backup-download.js';
+import { exportBackup } from '../../src/backup-download.js';
 import { CATEGORIES } from '../../src/categorise.js';
 import { formatPaise } from '../../src/format-amount.js';
 import { parseEntry } from '../../src/parse-entry.js';
 import { INVALID_HINT, showHint, spendLabel, wireQuickEntry } from '../../src/quick-entry.js';
 import { totals } from '../../src/totals.js';
+import { exportMonthCsv } from '../data/export-month-csv.js';
 import { categoryOf, ledgerFor, loadEntries } from '../data/ledger.js';
 
 export { CATEGORIES, categoryOf, formatPaise, INVALID_HINT };
@@ -283,8 +284,9 @@ export function renderToday(state = { status: 'loading' }) {
  * exportBackup() in src/backup-download.js, which downloads the dated JSON
  * file on the phone with no network; a read that fails downloads nothing
  * and shows EXPORT_ERROR under the button.
- * Export CSV does the same with `csv`, by default exportCsv() in
- * src/backup-download.js, which downloads this month's spends as a CSV file;
+ * Export CSV does the same with `csv`, by default exportMonthCsv() in
+ * js/data/export-month-csv.js, which runs exportCsv() from
+ * src/backup-download.js with this month's spends as the rows;
  * a read that fails shows EXPORT_CSV_ERROR on the same line.
  * `ledger` defaults to src/ledger.js, the on-device store. isCurrent() turns false once the router has replaced this screen,
  * so a late load writes nothing. Returns the first load's promise, which
@@ -296,7 +298,7 @@ export function mountToday({
   load = loadEntries,
   ledger = ledgerFor(),
   backup = exportBackup,
-  csv = exportCsv,
+  csv = exportMonthCsv,
 }) {
   const root = main.querySelector('.today');
   const view = main.querySelector('[data-today-view]');

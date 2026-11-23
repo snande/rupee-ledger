@@ -22,6 +22,8 @@ import { formatPaise as sharedFormatPaise } from '../../src/format-amount.js';
 import { INVALID_HINT as QUICK_ENTRY_HINT } from '../../src/quick-entry.js';
 import { fromRecord } from '../data/ledger.js';
 import { EXPORT_CSV_ERROR, EXPORT_CSV_LABEL } from './today.js';
+import { add, closeLedger } from '../../src/ledger.js';
+import { createFakeIndexedDB, FakeIDBKeyRange } from '../../src/ledger/fake-indexeddb.js';
 
 const now = Date.now();
 const sample = [
@@ -1157,6 +1159,65 @@ test('a CSV export that throws at once still shows the error', async () => {
   await tick();
   assert.equal(screen.exportStatus.textContent, EXPORT_CSV_ERROR);
   assert.equal(screen.csvButton.disabled, false);
+});
+
+/* With no `csv` injected, Export CSV downloads this month's spends from the
+   on-device store as rows under the header, not a header-only file: the
+   default is exportMonthCsv(), as on the Backup screen. */
+test('Export CSV by default downloads this month’s spends as rows', async () => {
+  const saved = {
+    indexedDB: globalThis.indexedDB,
+    IDBKeyRange: globalThis.IDBKeyRange,
+    document: globalThis.document,
+    createObjectURL: URL.createObjectURL,
+    revokeObjectURL: URL.revokeObjectURL,
+  };
+  const blobs = [];
+  const names = [];
+  await closeLedger();
+  globalThis.indexedDB = createFakeIndexedDB();
+  globalThis.IDBKeyRange = FakeIDBKeyRange;
+  globalThis.document = {
+    body: { appendChild() {} },
+    createElement: () => ({
+      href: '',
+      download: '',
+      setAttribute() {},
+      click() { names.push(this.download); },
+      remove() {},
+    }),
+  };
+  URL.createObjectURL = (blob) => {
+    blobs.push(blob);
+    return 'blob:today/' + blobs.length;
+  };
+  URL.revokeObjectURL = () => {};
+  try {
+    await add({ amountPaise: 12000, note: 'chai', createdAt: Date.now() });
+    const screen = fakeScreenWithCsv();
+    await mountToday({ main: screen.main, load: async () => sample, ledger: keep });
+    screen.csvButton.dispatch('click');
+    /* The fake store answers on timers, so wait for the export to settle. */
+    for (let i = 0; i < 200 && screen.csvButton.disabled; i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+
+    assert.equal(screen.csvButton.disabled, false);
+    assert.equal(screen.exportStatus.textContent, '');
+    assert.equal(blobs.length, 1);
+    assert.match(names[0], /^rupee-ledger-\d{4}-\d{2}\.csv$/);
+    const rows = (await blobs[0].text()).split('\r\n');
+    assert.equal(rows[0], 'Date,Amount (₹),Category,Note');
+    assert.equal(rows.length, 2, 'one row for the one spend');
+    assert.match(rows[1], /chai/);
+  } finally {
+    await closeLedger();
+    globalThis.indexedDB = saved.indexedDB;
+    globalThis.IDBKeyRange = saved.IDBKeyRange;
+    globalThis.document = saved.document;
+    URL.createObjectURL = saved.createObjectURL;
+    URL.revokeObjectURL = saved.revokeObjectURL;
+  }
 });
 
 /* The Export backup control's look comes only from tokens defined in

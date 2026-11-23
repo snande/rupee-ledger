@@ -60,7 +60,7 @@
 
 const VERSION = 'v16';
 // sha-256 of the precached files' contents; see the note above and sw.test.js.
-const ASSETS_DIGEST = '68ab7bc1beb7ca46317505b440d9165ce4801a9296aa91deedb18ced6abebf1f';
+const ASSETS_DIGEST = '820010ec95863783665e68371404017fb0bff191051a7daea42e9e6d81e61ecc';
 // Every cache this app has ever named starts with this, whatever its VERSION.
 const APP_CACHES = 'rupee-ledger-';
 const PREFIX = APP_CACHES + VERSION + '-';
