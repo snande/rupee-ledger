@@ -4,20 +4,17 @@
 //
 // A spend counts by the same rule as the This month card in src/totals.js
 // (datedPaise + inMonth on the device's local calendar), and also only when
-// it is not later than `now`.
+// it is not later than `now`. So the CSV's amounts sum to
+// `totals(entries, now).month` unless a spend is dated later this month than
+// `now`; such a spend counts toward the card but is not exported yet.
 
-import { datedPaise, inMonth } from './totals.js';
+import { datedPaise, inMonth, toDate } from './totals.js';
 
 /** Row 1 of every month CSV. */
 export const CSV_HEADER = 'Date,Amount (₹),Category,Note';
 
-/* A Date for epoch milliseconds, a Date or an ISO string; null if invalid. */
-function toDate(value) {
-  if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
-  if (typeof value !== 'number' && typeof value !== 'string') return null;
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? null : date;
-}
+/** The record separator, CRLF as RFC 4180 specifies. */
+export const CSV_EOL = '\r\n';
 
 const pad2 = (n) => String(n).padStart(2, '0');
 
@@ -38,9 +35,10 @@ export function csvField(value) {
 
 /**
  * The spends of `now`'s local calendar month, up to and including `now`, as
- * CSV text. Rows are joined with `\n`; the header is always present.
+ * CSV text. Records are separated by CRLF; the header is always present.
  * @param {Array<{ amountPaise?: number, amount?: number, note?: string,
- *                 category?: string, timestamp?: number | string | Date,
+ *                 category?: string, createdAt?: number | string | Date,
+ *                 timestamp?: number | string | Date,
  *                 ts?: number | string | Date }>} entries  Not modified.
  * @param {number | string | Date} [now]  The reference moment; defaults to now.
  * @returns {string}
@@ -64,5 +62,5 @@ export function monthCsv(entries, now = new Date()) {
   const rows = kept.map(({ entry, paise, at }) =>
     [localDate(at), String(paise / 100), csvField(entry.category), csvField(entry.note)].join(','),
   );
-  return [CSV_HEADER, ...rows].join('\n');
+  return [CSV_HEADER, ...rows].join(CSV_EOL);
 }

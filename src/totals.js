@@ -21,8 +21,12 @@ export function toPaise(entry) {
   return Number.isSafeInteger(paise) ? paise : null;
 }
 
-/* A Date for epoch milliseconds, a Date or an ISO string; null if invalid. */
-function toDate(value) {
+/**
+ * A Date for epoch milliseconds, a Date or an ISO string; null if invalid.
+ * @param {unknown} value
+ * @returns {Date | null}
+ */
+export function toDate(value) {
   if (value instanceof Date) return Number.isNaN(value.getTime()) ? null : value;
   if (typeof value !== 'number' && typeof value !== 'string') return null;
   const date = new Date(value);
@@ -33,12 +37,14 @@ function toDate(value) {
  * An entry's paise and its moment, or `null` when either is unusable; the
  * rule every total uses to decide which entries count.
  * @param {{ amount?: number, amountPaise?: number,
+ *           createdAt?: number | string | Date,
  *           timestamp?: number | string | Date, ts?: number | string | Date }} entry
+ *   The moment is `createdAt` (what the ledger stores), else `timestamp`, else `ts`.
  * @returns {{ paise: number, at: Date } | null}
  */
 export function datedPaise(entry) {
   const paise = toPaise(entry);
-  const at = toDate(entry?.timestamp ?? entry?.ts);
+  const at = toDate(entry?.createdAt ?? entry?.timestamp ?? entry?.ts);
   return paise === null || !at ? null : { paise, at };
 }
 
@@ -53,7 +59,7 @@ export function inMonth(at, year, monthIndex) {
 }
 
 /**
- * @param {Array<{ amount?: number, amountPaise?: number,
+ * @param {Array<{ amount?: number, amountPaise?: number, createdAt?: number | string | Date,
  *                 timestamp?: number | string | Date, ts?: number | string | Date }>} entries
  * @param {number | string | Date} [now]  The reference moment; defaults to now.
  * @returns {{ today: number, month: number }}  Integer paise. Entries without

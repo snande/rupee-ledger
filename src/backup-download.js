@@ -8,6 +8,7 @@
 // `list`, `doc`, `url` and `now` are passed in so tests can run it in Node.
 
 import { backupFilename, serializeBackup } from './backup-export.js';
+import { CSV_HEADER } from './csv-export.js';
 import { listEntries } from './ledger/store.js';
 
 /* Waits one task, so the browser has taken the click before the URL goes. */
@@ -41,8 +42,6 @@ export async function exportBackup({
 /** The standard media type of a CSV file. */
 export const CSV_MIME = 'text/csv';
 
-/* The header line of the spreadsheet file. */
-const CSV_HEADER = 'Date,Amount (₹),Category,Note';
 
 /**
  * The CSV file's name for the month of `now`, in local time:

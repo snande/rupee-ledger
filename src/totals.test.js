@@ -117,3 +117,12 @@ test('the module is offline, dependency-free and shows no currency but ₹', asy
   assert.doesNotMatch(source, /\b(?:require|fetch|XMLHttpRequest|WebSocket)\s*\(/);
   assert.doesNotMatch(source, /[$€£¥₩₽¢]|\bUSD\b|\bINR\b|\bRs\.?\s/);
 });
+
+test('a stored record dated by createdAt counts, and createdAt wins over timestamp', () => {
+  const now = new Date(2026, 10, 23, 15, 0);
+  const stored = { id: 1, amountPaise: 12000, note: 'chai', category: 'Food', createdAt: new Date(2026, 10, 23, 9, 0).getTime() };
+  assert.deepEqual(totals([stored], now), { today: 12000, month: 12000 });
+
+  const both = { amountPaise: 500, createdAt: new Date(2026, 10, 2).getTime(), timestamp: new Date(2026, 9, 2).getTime() };
+  assert.deepEqual(totals([both], now), { today: 0, month: 500 });
+});
