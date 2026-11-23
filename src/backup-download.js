@@ -1,6 +1,7 @@
 // Downloads the backup file: every entry in the on-device store, written by
 // serializeBackup() in src/backup-export.js and saved through a temporary
-// <a download> link to a Blob URL. Everything happens on the phone: no
+// <a download> link to a Blob URL. exportCsv() saves this month's spends as
+// rupee-ledger-YYYY-MM.csv the same way. Everything happens on the phone: no
 // fetch, no XHR, nothing leaves the device, so it works with no network.
 // The store is read before anything else is made, so a read that fails
 // rejects without a Blob, a URL or a download: never an empty or part file.
@@ -33,6 +34,58 @@ export async function exportBackup({
   if (!Array.isArray(entries)) throw new TypeError('The ledger read did not return a list of entries.');
   const filename = backupFilename(now);
   const blob = new Blob([serializeBackup(entries, now)], { type: 'application/json' });
+  await downloadBlob(blob, filename, { doc, url });
+  return { filename, count: entries.length };
+}
+
+/** The standard media type of a CSV file. */
+export const CSV_MIME = 'text/csv';
+
+/* The header line of the spreadsheet file. */
+const CSV_HEADER = 'Date,Amount (₹),Category,Note';
+
+/**
+ * The CSV file's name for the month of `now`, in local time:
+ * `rupee-ledger-YYYY-MM.csv`, the month zero-padded.
+ * @param {Date} now
+ * @returns {string}
+ */
+export function csvFilename(now) {
+  const year = String(now.getFullYear()).padStart(4, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `rupee-ledger-${year}-${month}.csv`;
+}
+
+/**
+ * Builds the CSV of the stored entries and starts its download.
+ * @param {{ list?: () => Promise<Array<object>>, doc?: Document,
+ *   url?: { createObjectURL: Function, revokeObjectURL: Function },
+ *   now?: Date, toCsv?: (entries: Array<object>, now: Date) => string }}
+ *   [options]  `list`, `doc`, `url` and `now` default as for exportBackup();
+ *   `toCsv` turns the entries into the file's text and defaults to the
+ *   header line alone.
+ * @returns {Promise<{ filename: string, count: number }>}  once the object
+ *   URL has been revoked. Rejects, having downloaded nothing, when the read
+ *   fails.
+ */
+export async function exportCsv({
+  list = listEntries,
+  doc = globalThis.document,
+  url = globalThis.URL,
+  now = new Date(),
+  toCsv = () => CSV_HEADER,
+} = {}) {
+  const entries = await list();
+  if (!Array.isArray(entries)) throw new TypeError('The ledger read did not return a list of entries.');
+  const filename = csvFilename(now);
+  const blob = new Blob([toCsv(entries, now)], { type: CSV_MIME });
+  await downloadBlob(blob, filename, { doc, url });
+  return { filename, count: entries.length };
+}
+
+/* Saves `blob` as `filename` through a temporary <a download> link, then
+   revokes its object URL, even when the click throws. */
+async function downloadBlob(blob, filename, { doc, url }) {
   const href = url.createObjectURL(blob);
   try {
     const link = doc.createElement('a');
@@ -51,5 +104,4 @@ export async function exportBackup({
   } finally {
     url.revokeObjectURL(href);
   }
-  return { filename, count: entries.length };
 }
