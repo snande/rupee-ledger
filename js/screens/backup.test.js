@@ -8,12 +8,16 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { addedMessage, CANCELLED, IMPORT_LABEL, mountBackup, previewMessage, readFileText, renderBackup } from './backup.js';
+import {
+  addedMessage, CANCELLED, CSV_BUSY, CSV_ERROR, CSV_LABEL, csvDoneMessage, IMPORT_LABEL, mountBackup, previewMessage,
+  readFileText, renderBackup,
+} from './backup.js';
 import { mountToday } from './today.js';
 import { mountMonth } from './month.js';
 import { BACKUP_FORMAT, BACKUP_FORMAT_VERSION, parseBackup } from '../../src/backup-import.js';
 import { formatPaise } from '../../src/format-amount.js';
 import { closeLedger } from '../../src/ledger/store.js';
+import { add } from '../../src/ledger.js';
 import { createFakeIndexedDB, FakeIDBKeyRange } from '../../src/ledger/fake-indexeddb.js';
 
 /* The fake ledger answers on timers, so wait a few of them out. */
@@ -326,4 +330,104 @@ test('the Backup screen reads files on the phone and never uses the network', as
   assert.match(source, /parseBackup/);
   assert.match(source, /importEntries/);
   assert.match(source, /previewImport/);
+});
+
+/* Export CSV */
+
+test('the screen offers an Export CSV button with a status line under it', () => {
+  const html = renderBackup();
+  assert.match(html, /<section class="card backup-export" aria-labelledby="backup-export-heading">/);
+  assert.match(html, /<button type="button" class="backup-csv" aria-describedby="backup-csv-hint" data-export-csv>Export CSV<\/button>/);
+  assert.match(html, /<p class="hint" id="backup-csv-hint">/);
+  assert.match(html, /role="status" data-export-csv-status hidden/);
+  assert.ok(html.indexOf(CSV_LABEL) < html.indexOf(IMPORT_LABEL));
+});
+
+test('csvDoneMessage names the file and counts the spends', () => {
+  assert.equal(csvDoneMessage({ filename: 'rupee-ledger-2026-11.csv', count: 2 }), 'Downloaded rupee-ledger-2026-11.csv with 2 spends.');
+  assert.equal(csvDoneMessage({ filename: 'rupee-ledger-2026-11.csv', count: 1 }), 'Downloaded rupee-ledger-2026-11.csv with 1 spend.');
+  assert.match(csvDoneMessage({ filename: 'rupee-ledger-2026-11.csv', count: 0 }), /^Downloaded rupee-ledger-2026-11\.csv\. No spends this month yet/);
+});
+
+test('tapping Export CSV runs one export, says it is making the file, then names it', async () => {
+  const screen = fakeMain();
+  let release;
+  let calls = 0;
+  const mounted = mountBackup({
+    main: screen,
+    exportCsv: () => {
+      calls += 1;
+      return new Promise((resolve) => {
+        release = () => resolve({ filename: 'rupee-ledger-2026-11.csv', count: 2 });
+      });
+    },
+  });
+  const button = screen.part('[data-export-csv]');
+  const line = screen.part('[data-export-csv-status]');
+
+  button.dispatch('click');
+  assert.equal(button.disabled, true);
+  assert.equal(line.textContent, CSV_BUSY);
+  assert.equal(line.getAttribute('hidden'), null);
+  button.dispatch('click');
+  assert.equal(calls, 1);
+
+  release();
+  await mounted.exporting();
+  assert.equal(button.disabled, false);
+  assert.equal(line.textContent, 'Downloaded rupee-ledger-2026-11.csv with 2 spends.');
+  assert.equal(line.getAttribute('role'), 'status');
+  assert.equal(line.classList.contains('hint-error'), false);
+
+  button.dispatch('click');
+  release();
+  await mounted.exporting();
+  assert.equal(calls, 2);
+});
+
+test('an export that fails says so in sindoor and the button works again', async () => {
+  const screen = fakeMain();
+  const mounted = mountBackup({
+    main: screen,
+    exportCsv: async () => {
+      throw new Error('The ledger read was aborted.');
+    },
+  });
+  const button = screen.part('[data-export-csv]');
+  const line = screen.part('[data-export-csv-status]');
+  button.dispatch('click');
+  await mounted.exporting();
+  assert.equal(line.textContent, CSV_ERROR);
+  assert.equal(line.getAttribute('role'), 'alert');
+  assert.equal(line.classList.contains('hint-error'), true);
+  assert.equal(button.disabled, false);
+});
+
+test('by default Export CSV downloads this month’s spends from the ledger, named for the month', async () => {
+  const now = new Date();
+  const earlier = (minutes) => new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, minutes).getTime();
+  await add({ amountPaise: 12000, note: 'chai', createdAt: earlier(0) });
+  await add({ amountPaise: 4550, note: 'auto', createdAt: earlier(1) });
+
+  const names = [];
+  const savedDocument = globalThis.document;
+  globalThis.document = {
+    body: { appendChild() {} },
+    createElement() {
+      const link = { setAttribute() {}, click: () => names.push(link.download), remove() {} };
+      return link;
+    },
+  };
+  try {
+    const screen = fakeMain();
+    const mounted = mountBackup({ main: screen });
+    screen.part('[data-export-csv]').dispatch('click');
+    await mounted.exporting();
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const filename = 'rupee-ledger-' + now.getFullYear() + '-' + month + '.csv';
+    assert.deepEqual(names, [filename]);
+    assert.equal(screen.part('[data-export-csv-status]').textContent, 'Downloaded ' + filename + ' with 2 spends.');
+  } finally {
+    globalThis.document = savedDocument;
+  }
 });

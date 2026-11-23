@@ -58,9 +58,9 @@
  * changes without it. Bump VERSION and paste the new digest together.
  */
 
-const VERSION = 'v14';
+const VERSION = 'v15';
 // sha-256 of the precached files' contents; see the note above and sw.test.js.
-const ASSETS_DIGEST = '52f9fc003b8db0394d51e59c03c98725e0ea93466dc6d1c6bb4174ece201c5c4';
+const ASSETS_DIGEST = 'ce6a59a8de79b6cdf265a641ad63546475a13ad40ce7b1271e7426dd984993b4';
 // Every cache this app has ever named starts with this, whatever its VERSION.
 const APP_CACHES = 'rupee-ledger-';
 const PREFIX = APP_CACHES + VERSION + '-';
@@ -81,6 +81,7 @@ const ASSETS = [
   './js/app.js',
   './js/router.js',
   './js/sw-register.js',
+  './js/data/export-month-csv.js',
   './js/data/ledger.js',
   './js/screens/backup.js',
   './js/screens/compare.js',
@@ -94,6 +95,7 @@ const ASSETS = [
   './src/categorise.js',
   './src/category-totals.js',
   './src/compare-months.js',
+  './src/csv-export.js',
   './src/format-amount.js',
   './src/ledger.js',
   './src/ledger/store.js',
