@@ -56,10 +56,10 @@ def rupees(text):
 
 def read_rows(download):
     path = download.path()
-    text = Path(path).read_text(encoding="utf-8")
+    text = Path(path).read_text(encoding="utf-8-sig")
     rows = list(csv.reader(io.StringIO(text)))
     assert rows[0] == ["Date", "Amount (₹)", "Category", "Note"], rows[0]
-    return rows[1:]
+    return [row for row in rows[1:] if row]
 
 
 def export_once(page, expected_name):

@@ -127,8 +127,13 @@ export function renderBackup() {
  * '0 added' with no choice to make. A result that arrives after the route
  * has changed writes nothing. The picker is cleared after each file so the
  * same one can be chosen again, and choosing another file replaces a
- * preview still waiting. Returns { importing }: importing() resolves once
- * the latest read, preview or import has settled, so a test can wait for it.
+ * preview still waiting.
+ * Export CSV runs `exportCsv` (exportMonthCsv() by default) once per tap,
+ * the button off and the line under it saying CSV_BUSY while it runs; the
+ * line then names the downloaded file and how many spends it holds, or in
+ * sindoor says CSV_ERROR when the read failed and nothing was downloaded.
+ * Returns { importing, exporting }: each resolves once the latest import
+ * step or export has settled, so a test can wait for it.
  */
 export function mountBackup({
   main,
