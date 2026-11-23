@@ -5,6 +5,6 @@
   "description": "An offline, static-file rupee spend ledger.",
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test && node scripts/check-csv-exact.mjs"
   }
 }
