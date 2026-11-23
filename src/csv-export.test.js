@@ -1,7 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { monthCsv, MONTH_CSV_HEADER } from './csv-export.js';
+import { readFileSync } from 'node:fs';
+
+import {
+  CSV_BOM,
+  CSV_HEADER,
+  csvFilename,
+  monthCsv,
+  MONTH_CSV_HEADER,
+  serializeCsv,
+} from './csv-export.js';
 import { totals } from './totals.js';
 
 const NOW = new Date(2026, 10, 23, 15, 0); // 23 Nov 2026, 15:00 local.
@@ -134,4 +143,62 @@ test('monthCsv leaves its entries argument unmodified', () => {
 test('bad input gives just the header', () => {
   assert.equal(monthCsv(undefined, NOW), MONTH_CSV_HEADER);
   assert.equal(monthCsv(seed(), 'not a date'), MONTH_CSV_HEADER);
+});
+
+test('CSV_HEADER is the pinned header row', () => {
+  assert.equal(CSV_HEADER, 'Date,Amount (₹),Category,Note');
+  assert.equal(MONTH_CSV_HEADER, CSV_HEADER);
+  assert.equal(CSV_BOM, '﻿');
+});
+
+test('serializeCsv([]) is exactly the BOM, the header and one CRLF', () => {
+  assert.equal(serializeCsv([]), '﻿Date,Amount (₹),Category,Note\r\n');
+});
+
+test('serializeCsv writes one CRLF-ended line per row, quoting per RFC 4180', () => {
+  const text = serializeCsv([
+    ['2026-11-01', '120', 'Transport', 'auto'],
+    ['2026-11-12', 45.5, 'Food', 'chai, samosa'],
+    ['2026-11-23', '123450', 'Home', 'rent "Nov"'],
+    ['2026-11-23', '20', null, undefined],
+  ]);
+  assert.equal(
+    text,
+    '﻿Date,Amount (₹),Category,Note\r\n'
+      + '2026-11-01,120,Transport,auto\r\n'
+      + '2026-11-12,45.5,Food,"chai, samosa"\r\n'
+      + '2026-11-23,123450,Home,"rent ""Nov"""\r\n'
+      + '2026-11-23,20,,\r\n',
+  );
+  assert.deepEqual(parseCsv(text.slice(1)).slice(1, -1), [
+    ['2026-11-01', '120', 'Transport', 'auto'],
+    ['2026-11-12', '45.5', 'Food', 'chai, samosa'],
+    ['2026-11-23', '123450', 'Home', 'rent "Nov"'],
+    ['2026-11-23', '20', '', ''],
+  ]);
+});
+
+test('serializeCsv rejects rows that are not arrays of cells', () => {
+  assert.throws(() => serializeCsv(undefined), TypeError);
+  assert.throws(() => serializeCsv([{ date: '2026-11-01', amount: 120 }]), TypeError);
+});
+
+test('csvFilename() names the file for the local year and zero-padded month', () => {
+  assert.equal(csvFilename(new Date(2025, 2, 7)), 'rupee-ledger-2025-03.csv');
+  assert.equal(csvFilename(new Date(2026, 0, 1, 0, 0)), 'rupee-ledger-2026-01.csv');
+  assert.equal(csvFilename(new Date(2025, 11, 31, 23, 59, 59)), 'rupee-ledger-2025-12.csv');
+});
+
+test('src/csv-export.js only imports from src and touches no DOM, storage or network', () => {
+  const source = readFileSync(new URL('./csv-export.js', import.meta.url), 'utf8');
+  const specifiers = [...source.matchAll(/^\s*import\b[^'"]*['"]([^'"]+)['"]/gm)].map((m) => m[1]);
+  assert.ok(specifiers.length > 0);
+  for (const specifier of specifiers) {
+    assert.match(specifier, /^\.\/(?!\.)/, `${specifier} is not a module in src`);
+    assert.doesNotMatch(specifier, /ledger\/store|backup-download/);
+  }
+  assert.doesNotMatch(
+    source,
+    /\b(document|window|localStorage|sessionStorage|indexedDB|fetch|XMLHttpRequest|navigator|listEntries)\s*[.(]/,
+  );
 });

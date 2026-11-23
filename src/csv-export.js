@@ -36,15 +36,22 @@ export function csvFilename(now) {
  * The CSV file's text: the BOM, the header line and a CRLF, then each row's
  * cells (quoted per RFC 4180 when needed) joined by commas and ended by a
  * CRLF. With no rows it is the BOM, the header and one CRLF alone.
- * @param {Array<Array<unknown>>} rows
+ * @param {Array<Array<unknown>>} rows  Each row is an array of cells in
+ *   header order (Date, Amount, Category, Note); `null`/`undefined` cells
+ *   are written empty.
  * @returns {string}
+ * @throws {TypeError} when `rows` is not an array or any row is not an
+ *   array of cells, rather than silently writing a header-only file.
  */
 export function serializeCsv(rows) {
+  if (!Array.isArray(rows)) throw new TypeError('serializeCsv expects an array of rows.');
   let text = `${CSV_BOM}${CSV_HEADER}\r\n`;
-  if (!Array.isArray(rows)) return text;
-  for (const row of rows) {
-    if (Array.isArray(row)) text += `${row.map(csvField).join(',')}\r\n`;
-  }
+  rows.forEach((row, index) => {
+    if (!Array.isArray(row)) {
+      throw new TypeError(`serializeCsv row ${index} is not an array of cells.`);
+    }
+    text += `${row.map(csvField).join(',')}\r\n`;
+  });
   return text;
 }
 
