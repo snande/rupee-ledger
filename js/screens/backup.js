@@ -1,5 +1,6 @@
 /*
- * The Backup screen: an Import backup file picker that restores a backup
+ * The Backup screen: an Export CSV button that downloads this month's spends
+ * as a spreadsheet file, and an Import backup file picker that restores a backup
  * made by Export backup on the Today screen. renderBackup() returns the
  * whole screen for the router to put into <main>; mountBackup() then waits
  * for a file to be chosen.
@@ -16,15 +17,33 @@
  * twice adds nothing the second time. A file that is not a valid backup
  * shows parseBackup's own message and writes nothing. The Today and Month screens load from the ledger each time they
  * open, so their totals include the restored spends straight away.
+ *
+ * Export CSV hands this month's spends to exportMonthCsv() in
+ * js/data/export-month-csv.js: the rows the This month card sums, saved on
+ * the phone as rupee-ledger-YYYY-MM.csv, with no network.
  */
 
 import { parseBackup, importEntries, previewImport } from '../../src/backup-import.js';
 import { addMissingEntries, listEntries } from '../../src/ledger/store.js';
+import { exportMonthCsv } from '../data/export-month-csv.js';
 
 export const IMPORT_LABEL = 'Import backup';
 export const IMPORT_HINT = 'Choose a backup file made with Export backup. Spends already on this phone are skipped, never replaced.';
 export const READ_ERROR = 'The backup file could not be read.';
 export const CANCELLED = 'Import cancelled. Nothing was added.';
+export const CSV_LABEL = 'Export CSV';
+export const CSV_HINT = 'Download this month’s spends as a spreadsheet file. It is made on this phone, so it works offline too.';
+export const CSV_BUSY = 'Making your file';
+export const CSV_ERROR = 'The file was not made: your spends could not be read. Nothing was downloaded. Tap Export CSV to try again.';
+
+/* What Export CSV says once the file is saved:
+   'Downloaded rupee-ledger-2026-11.csv with 2 spends.' */
+export function csvDoneMessage({ filename = '', count = 0 } = {}) {
+  if (count === 0) {
+    return 'Downloaded ' + filename + '. No spends this month yet, so it holds only the column names.';
+  }
+  return 'Downloaded ' + filename + ' with ' + spendCount(count) + '.';
+}
 
 /* '12 Sep 2026', as the Search screen writes dates. */
 const DATE_LABEL = new Intl.DateTimeFormat('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -74,6 +93,12 @@ export function readFileText(file) {
 
 export function renderBackup() {
   return '<div class="backup">' +
+    '<section class="card backup-export" aria-labelledby="backup-export-heading">' +
+      '<h2 id="backup-export-heading">This month’s spends</h2>' +
+      '<p class="hint" id="backup-csv-hint">' + CSV_HINT + '</p>' +
+      '<button type="button" class="backup-csv" aria-describedby="backup-csv-hint" data-export-csv>' + CSV_LABEL + '</button>' +
+      '<p class="hint backup-status" role="status" data-export-csv-status hidden></p>' +
+    '</section>' +
     '<section class="card backup-import" aria-labelledby="backup-import-heading">' +
       '<h2 id="backup-import-heading">' + IMPORT_LABEL + '</h2>' +
       '<p class="field backup-field">' +
@@ -102,33 +127,66 @@ export function renderBackup() {
  * '0 added' with no choice to make. A result that arrives after the route
  * has changed writes nothing. The picker is cleared after each file so the
  * same one can be chosen again, and choosing another file replaces a
- * preview still waiting. Returns { importing }: importing() resolves once
- * the latest read, preview or import has settled, so a test can wait for it.
+ * preview still waiting.
+ * Export CSV runs `exportCsv` (exportMonthCsv() by default) once per tap,
+ * the button off and the line under it saying CSV_BUSY while it runs; the
+ * line then names the downloaded file and how many spends it holds, or in
+ * sindoor says CSV_ERROR when the read failed and nothing was downloaded.
+ * Returns { importing, exporting }: each resolves once the latest import
+ * step or export has settled, so a test can wait for it.
  */
 export function mountBackup({
   main,
   isCurrent = () => true,
   store = STORE,
   read = readFileText,
+  exportCsv = exportMonthCsv,
 }) {
   const input = main.querySelector('[data-import-file]');
   const status = main.querySelector('[data-import-status]');
   const confirm = main.querySelector('[data-import-confirm]');
   const accept = main.querySelector('[data-import-accept]');
   const cancel = main.querySelector('[data-import-cancel]');
-  if (!input || !status || !confirm || !accept || !cancel) {
+  const csvButton = main.querySelector('[data-export-csv]');
+  const csvStatus = main.querySelector('[data-export-csv-status]');
+  if (!input || !status || !confirm || !accept || !cancel || !csvButton || !csvStatus) {
     throw new Error('The Backup screen markup is incomplete.');
   }
 
-  const show = (text, failed) => {
+  /* Writes `text` into a status line, in sindoor as an alert when it failed. */
+  const say = (line, text, failed) => {
     if (!isCurrent()) return;
-    status.textContent = text;
-    if (failed) status.classList?.add('hint-error');
-    else status.classList?.remove('hint-error');
-    status.setAttribute('role', failed ? 'alert' : 'status');
-    if (text) status.removeAttribute('hidden');
-    else status.setAttribute('hidden', '');
+    line.textContent = text;
+    if (failed) line.classList?.add('hint-error');
+    else line.classList?.remove('hint-error');
+    line.setAttribute('role', failed ? 'alert' : 'status');
+    if (text) line.removeAttribute('hidden');
+    else line.setAttribute('hidden', '');
   };
+  const show = (text, failed) => say(status, text, failed);
+
+  /* Export CSV: one download per tap, the button off while it runs. */
+  let exportingNow = false;
+  let exported = Promise.resolve();
+  csvButton.addEventListener('click', () => {
+    if (exportingNow) return;
+    exportingNow = true;
+    csvButton.disabled = true;
+    say(csvStatus, CSV_BUSY, false);
+    let running;
+    try {
+      running = Promise.resolve(exportCsv());
+    } catch (error) {
+      running = Promise.reject(error);
+    }
+    exported = running.then(
+      (result) => say(csvStatus, csvDoneMessage(result), false),
+      () => say(csvStatus, CSV_ERROR, true),
+    ).finally(() => {
+      exportingNow = false;
+      csvButton.disabled = false;
+    });
+  });
 
   /* The parsed entries waiting for Import or Cancel, or null. */
   let pending = null;
@@ -204,5 +262,5 @@ export function mountBackup({
   });
 
   if (typeof input.focus === 'function') input.focus();
-  return { importing: () => latest };
+  return { importing: () => latest, exporting: () => exported };
 }

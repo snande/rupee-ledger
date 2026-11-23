@@ -514,8 +514,19 @@ label {
 /* Backup screen: the Import backup picker in a card, with the line under it
    that reports the added and skipped counts, or in sindoor (.hint-error)
    why a file was refused. Every value is a token from css/tokens.css. */
-.backup-import h2 {
+.backup-import h2,
+.backup-export h2 {
   margin: 0 0 var(--space-3);
+}
+
+/* Export CSV: the screen's one primary button, under the line that says
+   what the file holds, with its status line beneath (.backup-status). */
+.backup-export .hint {
+  margin-bottom: var(--space-4);
+}
+
+.backup-export .backup-status {
+  margin-bottom: 0;
 }
 
 .backup-field {
