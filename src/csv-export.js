@@ -2,10 +2,51 @@
 // Uses the same rule as the This month card in src/totals.js (datedPaise and
 // inMonth), so the Amount cells sum to that total. Pure: no DOM, no storage,
 // no network; it never modifies the entries it is given.
+//
+// CSV_HEADER, csvFilename(now) and serializeCsv(rows) define the file itself:
+// its header row, its rupee-ledger-YYYY-MM.csv name for the local month, and
+// its text (a UTF-8 BOM, the header and a CRLF, then one CRLF-ended line per
+// row), so a month with no spends still yields a header-only file. Wiring the
+// month's spends in and the Export CSV download live elsewhere.
 
 import { datedPaise, inMonth } from './totals.js';
 
-export const MONTH_CSV_HEADER = 'Date,Amount (₹),Category,Note';
+/** The header row of the CSV file. */
+export const CSV_HEADER = 'Date,Amount (₹),Category,Note';
+
+/** The UTF-8 byte order mark, so spreadsheet apps read ₹ correctly. */
+export const CSV_BOM = '﻿';
+
+export const MONTH_CSV_HEADER = CSV_HEADER;
+
+/**
+ * The CSV file's name for the month of `now` on the device's local
+ * calendar (not UTC): `rupee-ledger-YYYY-MM.csv`, the month zero-padded,
+ * e.g. `rupee-ledger-2025-03.csv`.
+ * @param {Date} now
+ * @returns {string}
+ */
+export function csvFilename(now) {
+  const year = String(now.getFullYear()).padStart(4, '0');
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  return `rupee-ledger-${year}-${month}.csv`;
+}
+
+/**
+ * The CSV file's text: the BOM, the header line and a CRLF, then each row's
+ * cells (quoted per RFC 4180 when needed) joined by commas and ended by a
+ * CRLF. With no rows it is the BOM, the header and one CRLF alone.
+ * @param {Array<Array<unknown>>} rows
+ * @returns {string}
+ */
+export function serializeCsv(rows) {
+  let text = `${CSV_BOM}${CSV_HEADER}\r\n`;
+  if (!Array.isArray(rows)) return text;
+  for (const row of rows) {
+    if (Array.isArray(row)) text += `${row.map(csvField).join(',')}\r\n`;
+  }
+  return text;
+}
 
 /* A Date for epoch milliseconds, a Date or an ISO string; null if invalid. */
 function toDate(value) {
