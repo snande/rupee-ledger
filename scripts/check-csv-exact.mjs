@@ -1,9 +1,11 @@
 // CI check: the CSV that monthCsv builds matches the ledger records exactly.
 //
 // Seeds known month-to-date spends (one with paise, one at 00:00 on the 1st,
-// one at `now`) plus spends that must stay out of the file (23:59 on the last
-// day of the previous month, later on the same day as `now`), builds the CSV
-// with monthCsv, and compares every row's Date and Amount with its record.
+// one at `now`, and the typed lines `45.05 chai, samosa`, `120 "special"
+// thali` and `123450 rent` run through parseEntry) plus spends that must stay
+// out of the file (23:59 on the last day of the previous month, later on the
+// same day as `now`), builds the CSV with monthCsv, and checks that every row
+// has exactly four cells and that its Date, Amount and Note match its record.
 // Prints `CSV_EXACT mismatches=<n> missing=<n> extra=<n>` and exits non-zero
 // unless all three are 0. `npm test` runs it after `node --test`.
 //
@@ -15,14 +17,29 @@
 import { pathToFileURL } from 'node:url';
 
 import { CSV_HEADER, monthCsv } from '../src/csv-export.js';
+import { parseEntry } from '../src/parse-entry.js';
 
 /** The reference moment the seed is built around: 23 Nov 2026, 15:00 local. */
 export const NOW = new Date(2026, 10, 23, 15, 0);
 
 /**
+ * The amount and note of a quick-entry line typed into the app, exactly as
+ * parseEntry reads it.
+ * @param {string} line
+ * @returns {{ amountPaise: number, note: string }}
+ */
+function typed(line) {
+  const parsed = parseEntry(line);
+  if (!parsed) throw new Error(`parseEntry rejected the seed line ${JSON.stringify(line)}`);
+  return { amountPaise: parsed.amountPaise, note: parsed.note };
+}
+
+/**
  * The seeded ledger records for the month of `now`. Each carries `expected`:
- * whether its row belongs in the CSV. Notes are unique, so a row is matched
- * to its record by its Note cell.
+ * whether its row belongs in the CSV. Three of them are typed spends that go
+ * through parseEntry, as the quick-entry box does. Notes are unique, and so
+ * is each record's Date and Amount, so a row is matched to its record by its
+ * Note cell, or failing that by its Date and Amount.
  * @param {Date} now
  * @returns {Array<{ id: string, amountPaise: number, note: string,
  *                   category: string, timestamp: number, expected: boolean }>}
@@ -34,8 +51,14 @@ export function seedSpends(now = NOW) {
   return [
     { id: 'first', amountPaise: 12000, note: 'auto at midnight on the 1st', category: 'Transport',
       timestamp: at(year, month, 1, 0, 0), expected: true },
-    { id: 'paise', amountPaise: 4550, note: 'chai, samosa', category: 'Food',
+    { id: 'typed-chai', ...typed('45.05 chai, samosa'), category: 'Food',
+      timestamp: at(year, month, 5, 8, 15), expected: true },
+    { id: 'typed-thali', ...typed('120 "special" thali'), category: 'Food',
+      timestamp: at(year, month, 9, 13, 0), expected: true },
+    { id: 'paise', amountPaise: 4550, note: 'tea, biscuits', category: 'Food',
       timestamp: at(year, month, 12, 9, 30), expected: true },
+    { id: 'typed-rent', ...typed('123450 rent'), category: 'Home',
+      timestamp: at(year, month, 15, 10, 0), expected: true },
     { id: 'big', amountPaise: 12345007, note: 'rent "Nov", deposit', category: 'Home',
       timestamp: at(year, month, 20, 18, 45), expected: true },
     { id: 'one-paisa', amountPaise: 1, note: 'one paisa', category: 'Misc',
@@ -120,8 +143,12 @@ export function parseCsv(text) {
 }
 
 /**
- * Compares the CSV's rows with the seeded records.
- * - mismatches: rows whose record is expected but whose Date or Amount differs.
+ * Compares the CSV's rows with the seeded records. A row is matched to its
+ * record by its Note cell; a row whose Note matches no record (a changed note,
+ * or a note that spilled into extra columns) is matched instead to the
+ * not-yet-matched record with the same Date and Amount.
+ * - mismatches: rows whose record is expected but which do not have exactly
+ *   four cells, or whose Date, Amount or Note differs from the record.
  * - missing: expected records with no row.
  * - extra: rows with no record, rows for a record that must stay out (such
  *   as a prior-month spend), and repeat rows for the same record.
@@ -140,23 +167,49 @@ export function compareCsv(csvText, records) {
   let mismatches = 0;
   let extra = 0;
 
-  dataRows.forEach((cells, index) => {
-    const [date, amount, , note] = cells;
-    const record = byNote.get(note);
-    if (!record || !record.expected || seen.has(record.id)) {
-      extra += 1;
-      details.push(`extra row ${index + 1}: ${JSON.stringify(cells)}`);
-      return;
-    }
+  const addExtra = (cells, index) => {
+    extra += 1;
+    details.push(`extra row ${index + 1}: ${JSON.stringify(cells)}`);
+  };
+
+  const check = (cells, record) => {
     seen.add(record.id);
+    const [date, amount, , note] = cells;
     const wantDate = localDate(record.timestamp);
     const gotPaise = cellToPaise(amount ?? '');
-    if (date !== wantDate || gotPaise !== record.amountPaise) {
+    if (cells.length !== 4 || date !== wantDate || gotPaise !== record.amountPaise || note !== record.note) {
       mismatches += 1;
       details.push(
-        `mismatch for ${record.id}: got Date ${JSON.stringify(date)} Amount ${JSON.stringify(amount)}, ` +
-          `want Date "${wantDate}" Amount of ${record.amountPaise} paise`,
+        `mismatch for ${record.id}: got ${cells.length} cells ${JSON.stringify(cells)}, ` +
+          `want 4 cells with Date "${wantDate}" Amount of ${record.amountPaise} paise ` +
+          `Note ${JSON.stringify(record.note)}`,
       );
+    }
+  };
+
+  // First pass: rows whose Note cell names a record.
+  const unmatched = [];
+  dataRows.forEach((cells, index) => {
+    const record = byNote.get(cells[3]);
+    if (!record) {
+      unmatched.push([cells, index]);
+    } else if (!record.expected || seen.has(record.id)) {
+      addExtra(cells, index);
+    } else {
+      check(cells, record);
+    }
+  });
+
+  // Second pass: rows whose Note names no record, matched by Date and Amount.
+  unmatched.forEach(([cells, index]) => {
+    const [date, amount] = cells;
+    const gotPaise = cellToPaise(amount ?? '');
+    const record = records.find((candidate) => !seen.has(candidate.id)
+      && localDate(candidate.timestamp) === date && candidate.amountPaise === gotPaise);
+    if (!record || !record.expected) {
+      addExtra(cells, index);
+    } else {
+      check(cells, record);
     }
   });
 
