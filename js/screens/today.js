@@ -223,15 +223,17 @@ export function renderTodayView(state = {}) {
 }
 
 /* The Export backup control: a quiet secondary button below the spends,
-   outside the view that re-renders and apart from the entry box, an
-   Export CSV button beside it, the line that says when a backup or CSV
-   could not be made, and a link to the Backup screen, where a backup file
-   is imported. */
+   outside the view that re-renders and apart from the entry box, with the
+   line under it that says when a backup could not be made; an Export CSV
+   button beside it with its own line for a CSV that could not be made, so
+   neither export ever hides or clears the other's error; and a link to the
+   Backup screen, where a backup file is imported. */
 export function backupView() {
   return '<section class="today-backup" aria-label="Backup">' +
     '<button type="button" class="button-secondary today-export" data-export-backup>' + EXPORT_LABEL + '</button>' +
-    '<button type="button" class="button-secondary today-export" data-export-csv>' + EXPORT_CSV_LABEL + '</button>' +
     '<p class="hint hint-error today-export-status" role="alert" data-export-status hidden></p>' +
+    '<button type="button" class="button-secondary today-export" data-export-csv>' + EXPORT_CSV_LABEL + '</button>' +
+    '<p class="hint hint-error today-export-status" role="alert" data-export-csv-status hidden></p>' +
     '<a class="today-import-link" href="#/backup">' + IMPORT_LINK_LABEL + '</a>' +
   '</section>';
 }
@@ -287,8 +289,8 @@ export function renderToday(state = { status: 'loading' }) {
  * Export CSV does the same with `csv`, by default exportMonthCsv() in
  * js/data/export-month-csv.js, which runs exportCsv() from
  * src/backup-download.js with this month's spends as the rows;
- * a read that fails shows EXPORT_CSV_ERROR on the same line. A CSV tap
- * clears only its own error there, never an Export backup one.
+ * a read that fails shows EXPORT_CSV_ERROR on its own line under the CSV
+ * button. Each tap clears only its own line, never the other export's.
  * `ledger` defaults to src/ledger.js, the on-device store. isCurrent() turns false once the router has replaced this screen,
  * so a late load writes nothing. Returns the first load's promise, which
  * never rejects.
@@ -310,6 +312,7 @@ export function mountToday({
   const exportButton = main.querySelector('[data-export-backup]');
   const exportStatus = main.querySelector('[data-export-status]');
   const csvButton = main.querySelector('[data-export-csv]');
+  const csvStatus = main.querySelector('[data-export-csv-status]');
   if (!view || !form || !input || !hint) {
     throw new Error('The Today screen markup is incomplete.');
   }
@@ -623,13 +626,17 @@ export function mountToday({
     if (handled && typeof event.preventDefault === 'function') event.preventDefault();
   });
 
-  /* Export backup: one download per tap, the button off while it runs. */
-  function showExportError(text) {
-    if (!exportStatus) return;
-    exportStatus.textContent = text;
-    if (text) exportStatus.removeAttribute('hidden');
-    else exportStatus.setAttribute('hidden', '');
+  /* Sets one export's error line: shown with `text`, hidden when empty. */
+  function showError(line, text) {
+    if (!line) return;
+    line.textContent = text;
+    if (text) line.removeAttribute('hidden');
+    else line.setAttribute('hidden', '');
   }
+
+  /* Export backup: one download per tap, the button off while it runs. A
+     tap clears and sets only the backup's own error line. */
+  const showExportError = (text) => showError(exportStatus, text);
   let exporting = false;
   exportButton?.addEventListener('click', () => {
     if (exporting) return;
@@ -654,16 +661,16 @@ export function mountToday({
   });
 
   /* Export CSV: one download per tap, the button off while it runs. A tap
-     touches only its own button and its own error: it clears the shared
-     line only when that line holds EXPORT_CSV_ERROR, so an Export backup
-     error stays in view, and it never reloads, re-renders the Today view
-     or touches the entry box. */
+     touches only its own button and its own error line, so an Export
+     backup error stays in view whatever the CSV taps do, and it never
+     reloads, re-renders the Today view or touches the entry box. */
+  const showCsvError = (text) => showError(csvStatus, text);
   let exportingCsv = false;
   csvButton?.addEventListener('click', () => {
     if (exportingCsv) return;
     exportingCsv = true;
     csvButton.disabled = true;
-    if (exportStatus && exportStatus.textContent === EXPORT_CSV_ERROR) showExportError('');
+    showCsvError('');
     let running;
     try {
       running = Promise.resolve(csv());
@@ -673,7 +680,7 @@ export function mountToday({
     return running.then(
       () => {},
       () => {
-        if (isCurrent()) showExportError(EXPORT_CSV_ERROR);
+        if (isCurrent()) showCsvError(EXPORT_CSV_ERROR);
       },
     ).finally(() => {
       exportingCsv = false;

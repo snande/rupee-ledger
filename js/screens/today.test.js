@@ -1073,13 +1073,16 @@ test('a backup that throws at once still shows the error', async () => {
   assert.equal(screen.exportStatus.textContent, EXPORT_ERROR);
 });
 
-/* The screen with both export buttons and the shared error line. */
+/* The screen with both export buttons, each with its own error line. */
 function fakeScreenWithCsv() {
   const screen = fakeScreenWithExport();
   const csvButton = fakeElement();
+  const csvStatus = fakeElement();
+  csvStatus.setAttribute('hidden', '');
   const find = screen.main.querySelector;
-  screen.main.querySelector = (selector) => (selector === '[data-export-csv]' ? csvButton : find(selector));
-  return { ...screen, csvButton };
+  screen.main.querySelector = (selector) =>
+    selector === '[data-export-csv]' ? csvButton : selector === '[data-export-csv-status]' ? csvStatus : find(selector);
+  return { ...screen, csvButton, csvStatus };
 }
 
 test('the Backup section shows an Export CSV button after Export backup', () => {
@@ -1089,6 +1092,10 @@ test('the Backup section shows an Export CSV button after Export backup', () => 
   const section = html.slice(html.indexOf('<section class="today-backup"'), html.indexOf('</section>', html.indexOf('<section class="today-backup"')));
   assert.ok(section.includes(button), 'the CSV button is in the Backup section');
   assert.ok(section.indexOf('data-export-backup') < section.indexOf('data-export-csv'), 'it sits beside Export backup');
+  assert.ok(section.includes('<p class="hint hint-error today-export-status" role="alert" data-export-csv-status hidden></p>'), 'it has its own error line');
+  assert.ok(section.indexOf('data-export-backup') < section.indexOf('data-export-status'), 'the backup error sits under Export backup');
+  assert.ok(section.indexOf('data-export-status') < section.indexOf('data-export-csv>'), 'and above Export CSV');
+  assert.ok(section.indexOf('data-export-csv>') < section.indexOf('data-export-csv-status'), 'the CSV error sits under Export CSV');
   assert.ok(html.indexOf('data-export-csv') < html.indexOf('data-today-form'), 'the entry box stays last');
   assert.doesNotMatch(renderTodayView({ status: 'filled', entries: sample }), /data-export-csv/);
 });
@@ -1113,6 +1120,7 @@ test('Export CSV runs the CSV export once per tap and not the backup', async () 
   finish({ filename: 'rupee-ledger-2026-10.csv', count: 2 });
   await tick();
   assert.equal(screen.csvButton.disabled, false);
+  assert.equal(screen.csvStatus.getAttribute('hidden'), '');
   assert.equal(screen.exportStatus.getAttribute('hidden'), '');
   assert.equal(screen.input.focusCount, focused);
 
@@ -1138,15 +1146,16 @@ test('a CSV export whose read fails shows a visible error, and the next one clea
 
   screen.csvButton.dispatch('click');
   await tick();
-  assert.equal(screen.exportStatus.textContent, EXPORT_CSV_ERROR);
-  assert.equal(screen.exportStatus.getAttribute('hidden'), null);
+  assert.equal(screen.csvStatus.textContent, EXPORT_CSV_ERROR);
+  assert.equal(screen.csvStatus.getAttribute('hidden'), null);
+  assert.equal(screen.exportStatus.textContent, '', 'the backup line stays empty');
   assert.equal(screen.csvButton.disabled, false);
 
   fail = false;
   screen.csvButton.dispatch('click');
   await tick();
-  assert.equal(screen.exportStatus.textContent, '');
-  assert.equal(screen.exportStatus.getAttribute('hidden'), '');
+  assert.equal(screen.csvStatus.textContent, '');
+  assert.equal(screen.csvStatus.getAttribute('hidden'), '');
 });
 
 test('a CSV export that throws at once still shows the error', async () => {
@@ -1157,7 +1166,7 @@ test('a CSV export that throws at once still shows the error', async () => {
   await mountToday({ main: screen.main, load: async () => sample, ledger: keep, csv });
   screen.csvButton.dispatch('click');
   await tick();
-  assert.equal(screen.exportStatus.textContent, EXPORT_CSV_ERROR);
+  assert.equal(screen.csvStatus.textContent, EXPORT_CSV_ERROR);
   assert.equal(screen.csvButton.disabled, false);
 });
 
@@ -1243,7 +1252,79 @@ test('an Export backup error stays shown after a successful Export CSV tap', asy
   await tick();
   assert.equal(screen.exportStatus.textContent, EXPORT_ERROR);
   assert.equal(screen.exportStatus.getAttribute('hidden'), null);
+  assert.equal(screen.csvStatus.getAttribute('hidden'), '');
   assert.equal(screen.csvButton.disabled, false);
+});
+
+/* The order the shared line got wrong: a backup that fails, a CSV that
+   fails, then a CSV that succeeds, with no Export backup tap between. The
+   backup error stays shown throughout, beside the CSV one while it lasts. */
+test('an Export backup error survives a failed then a successful Export CSV tap', async () => {
+  const screen = fakeScreenWithCsv();
+  let backups = 0;
+  const backup = async () => { backups += 1; throw new Error('The ledger read was aborted.'); };
+  let csvFails = true;
+  const csv = async () => {
+    if (csvFails) throw new Error('The ledger read was aborted.');
+    return { filename: 'rupee-ledger-2026-11.csv', count: 2 };
+  };
+  await mountToday({ main: screen.main, load: async () => sample, ledger: keep, backup, csv });
+
+  screen.exportButton.dispatch('click');
+  await tick();
+  assert.equal(screen.exportStatus.textContent, EXPORT_ERROR);
+
+  screen.csvButton.dispatch('click');
+  await tick();
+  assert.equal(screen.csvStatus.textContent, EXPORT_CSV_ERROR);
+  assert.equal(screen.csvStatus.getAttribute('hidden'), null);
+  assert.equal(screen.exportStatus.textContent, EXPORT_ERROR, 'the CSV error does not replace it');
+  assert.equal(screen.exportStatus.getAttribute('hidden'), null);
+
+  csvFails = false;
+  screen.csvButton.dispatch('click');
+  await tick();
+  assert.equal(screen.csvStatus.textContent, '');
+  assert.equal(screen.csvStatus.getAttribute('hidden'), '');
+  assert.equal(screen.exportStatus.textContent, EXPORT_ERROR, 'the CSV success does not clear it');
+  assert.equal(screen.exportStatus.getAttribute('hidden'), null);
+  assert.equal(backups, 1, 'no backup was made since it appeared');
+});
+
+/* The other way round: a CSV error stays while Export backup fails and
+   then succeeds, and only the next CSV tap clears it. */
+test('an Export CSV error survives a failed then a successful Export backup tap', async () => {
+  const screen = fakeScreenWithCsv();
+  let backupFails = true;
+  const backup = async () => {
+    if (backupFails) throw new Error('The ledger read was aborted.');
+    return { filename: 'rupee-ledger-backup-2026-11-25.json', count: 2 };
+  };
+  let csvFails = true;
+  const csv = async () => {
+    if (csvFails) throw new Error('The ledger read was aborted.');
+    return { filename: 'rupee-ledger-2026-11.csv', count: 2 };
+  };
+  await mountToday({ main: screen.main, load: async () => sample, ledger: keep, backup, csv });
+
+  screen.csvButton.dispatch('click');
+  await tick();
+  screen.exportButton.dispatch('click');
+  await tick();
+  assert.equal(screen.exportStatus.textContent, EXPORT_ERROR);
+  assert.equal(screen.csvStatus.textContent, EXPORT_CSV_ERROR);
+
+  backupFails = false;
+  screen.exportButton.dispatch('click');
+  await tick();
+  assert.equal(screen.exportStatus.getAttribute('hidden'), '');
+  assert.equal(screen.csvStatus.textContent, EXPORT_CSV_ERROR, 'the backup success does not clear it');
+  assert.equal(screen.csvStatus.getAttribute('hidden'), null);
+
+  csvFails = false;
+  screen.csvButton.dispatch('click');
+  await tick();
+  assert.equal(screen.csvStatus.getAttribute('hidden'), '');
 });
 
 /* With no `csv` injected, Export CSV downloads this month's spends from the
