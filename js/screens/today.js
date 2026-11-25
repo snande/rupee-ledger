@@ -287,7 +287,8 @@ export function renderToday(state = { status: 'loading' }) {
  * Export CSV does the same with `csv`, by default exportMonthCsv() in
  * js/data/export-month-csv.js, which runs exportCsv() from
  * src/backup-download.js with this month's spends as the rows;
- * a read that fails shows EXPORT_CSV_ERROR on the same line.
+ * a read that fails shows EXPORT_CSV_ERROR on the same line. A CSV tap
+ * clears only its own error there, never an Export backup one.
  * `ledger` defaults to src/ledger.js, the on-device store. isCurrent() turns false once the router has replaced this screen,
  * so a late load writes nothing. Returns the first load's promise, which
  * never rejects.
@@ -652,13 +653,17 @@ export function mountToday({
     });
   });
 
-  /* Export CSV: one download per tap, the button off while it runs. */
+  /* Export CSV: one download per tap, the button off while it runs. A tap
+     touches only its own button and its own error: it clears the shared
+     line only when that line holds EXPORT_CSV_ERROR, so an Export backup
+     error stays in view, and it never reloads, re-renders the Today view
+     or touches the entry box. */
   let exportingCsv = false;
   csvButton?.addEventListener('click', () => {
     if (exportingCsv) return;
     exportingCsv = true;
     csvButton.disabled = true;
-    showExportError('');
+    if (exportStatus && exportStatus.textContent === EXPORT_CSV_ERROR) showExportError('');
     let running;
     try {
       running = Promise.resolve(csv());
