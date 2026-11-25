@@ -7,6 +7,18 @@ name: pages
 # hosting, which is the only target the Mandate allows ("No server or
 # paid hosting; static files only"). Enabling Pages for the repository
 # (Settings -> Pages -> Source: GitHub Actions) is the human step in #99.
+#
+# Two jobs, not one. actions/deploy-pages finds the site by listing the
+# artifacts of this workflow run. When the upload and the deploy ran as
+# steps of the same job, that list could still be empty when the deploy
+# step read it ("Found 0 artifact(s)" ... "No artifacts named
+# \"github-pages\" were found"). That happened on 79786b4, and it failed
+# the same way when the job was re-run (#156). The `build` job now
+# uploads the artifact and finishes. The `deploy` job starts only after
+# that (`needs: build`), so the artifact is already listed for the run
+# when it looks. The job that publishes is still called `deploy`, so the
+# check keeps its name. The job called `build` only packs the files as
+# they are; it does not bundle or change anything.
 
 on:
   push:
@@ -25,21 +37,27 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Upload the repository's static files as-is
+        uses: actions/upload-pages-artifact@v4
+        with:
+          # The repository root is the site. From v4 the action leaves
+          # out every dotfile and dot-directory (.git, .github,
+          # .gitignore and so on). The app loads none of them at
+          # runtime, so nothing it needs is excluded.
+          path: .
+
   deploy:
+    needs: build
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/configure-pages@v5
-      - name: Upload the repository's static files as-is
-        uses: actions/upload-pages-artifact@v3
-        with:
-          # The repository root is the site. The action already leaves
-          # out .git and .github; nothing the app loads at runtime is
-          # excluded.
-          path: .
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
