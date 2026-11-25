@@ -8,7 +8,8 @@ import assert from 'node:assert/strict';
 import { exportMonthCsv } from './export-month-csv.js';
 import { loadEntries } from './ledger.js';
 import { add, closeLedger } from '../../src/ledger.js';
-import { MONTH_CSV_HEADER } from '../../src/csv-export.js';
+import { CSV_BOM, MONTH_CSV_HEADER } from '../../src/csv-export.js';
+import { compareCsv, seedSpends, NOW as SEED_NOW } from '../../scripts/check-csv-exact.mjs';
 import { totals } from '../../src/totals.js';
 import { createFakeIndexedDB, FakeIDBKeyRange } from '../../src/ledger/fake-indexeddb.js';
 
@@ -42,6 +43,13 @@ function fakePage() {
 }
 
 const csvOf = async (page) => page.blobs[0].text();
+
+/* The saved file's exact text, keeping a leading BOM (Blob.text() drops it). */
+const rawCsvOf = async (page) =>
+  new TextDecoder('utf-8', { ignoreBOM: true }).decode(await page.blobs[0].arrayBuffer());
+
+/* The first three bytes of the saved file. */
+const leadingBytes = async (page) => [...new Uint8Array(await page.blobs[0].arrayBuffer()).slice(0, 3)];
 
 /* The Amount (₹) column of a CSV, summed in paise. */
 function amountColumnPaise(text) {
@@ -119,4 +127,45 @@ test('a read that fails rejects and downloads nothing', async () => {
   );
   assert.equal(page.blobs.length, 0);
   assert.deepEqual(page.names, []);
+});
+
+test('a month with spends saves the UTF-8 BOM, then the header and the unchanged rows', async () => {
+  const page = fakePage();
+  await exportMonthCsv({
+    load: async () => [
+      { amountPaise: 2500, note: 'bus', category: 'Travel', timestamp: new Date(2026, 10, 1, 7).getTime() },
+    ],
+    doc: page.doc,
+    url: page.url,
+    now: NOW,
+  });
+  assert.deepEqual(await leadingBytes(page), [0xef, 0xbb, 0xbf]);
+  const text = await rawCsvOf(page);
+  assert.ok(text.startsWith('﻿Date,Amount (₹),Category,Note'));
+  assert.equal(text, '﻿' + 'Date,Amount (₹),Category,Note' + '\r\n2026-11-01,25,Travel,bus');
+});
+
+test('a month with no spends saves the BOM and the header alone, counting 0', async () => {
+  await add({ amountPaise: 5000, note: 'lunch', createdAt: new Date(2026, 9, 12, 13).getTime() });
+  const page = fakePage();
+  const result = await exportMonthCsv({ doc: page.doc, url: page.url, now: NOW });
+  assert.deepEqual(result, { filename: 'rupee-ledger-2026-11.csv', count: 0 });
+  assert.deepEqual(await leadingBytes(page), [0xef, 0xbb, 0xbf]);
+  assert.equal(await rawCsvOf(page), CSV_BOM + MONTH_CSV_HEADER);
+});
+
+test('the exported text, BOM included, passes the CSV_EXACT check', async () => {
+  const records = seedSpends(SEED_NOW);
+  const page = fakePage();
+  const result = await exportMonthCsv({
+    load: async () => records.map(({ expected, ...entry }) => entry),
+    doc: page.doc,
+    url: page.url,
+    now: SEED_NOW,
+  });
+  const text = await rawCsvOf(page);
+  assert.ok(text.startsWith(CSV_BOM));
+  assert.equal(result.count, records.filter((record) => record.expected).length);
+  const { mismatches, missing, extra } = compareCsv(text, records);
+  assert.deepEqual({ mismatches, missing, extra }, { mismatches: 0, missing: 0, extra: 0 });
 });
