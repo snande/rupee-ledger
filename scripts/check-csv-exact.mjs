@@ -9,6 +9,15 @@
 // Prints `CSV_EXACT mismatches=<n> missing=<n> extra=<n>` and exits non-zero
 // unless all three are 0. `npm test` runs it after `node --test`.
 //
+// It then saves the same seeded spends through exportMonthCsv(), the Export
+// CSV button's download, into a fake page that keeps the Blob, and reads the
+// saved file's own bytes. Prints `CSV_BOM ok=1` when the text starts with
+// exactly one UTF-8 BOM (U+FEFF), then the header `Date,Amount (₹),Category,
+// Note` and a CRLF, and `CSV_BOM ok=0` otherwise; then
+// `CSV_DOWNLOAD mismatches=<n> missing=<n> extra=<n>` for the saved rows
+// compared as CSV_EXACT compares them. Exits non-zero unless the BOM line is
+// ok=1 and every count is 0.
+//
 // The expected Date and Amount are worked out here, independently of
 // src/csv-export.js: the Date is the record's local calendar day as
 // YYYY-MM-DD, and the Amount cell must read back as exactly the record's
@@ -16,7 +25,8 @@
 
 import { pathToFileURL } from 'node:url';
 
-import { CSV_HEADER, monthCsv } from '../src/csv-export.js';
+import { CSV_BOM, CSV_HEADER, monthCsv } from '../src/csv-export.js';
+import { exportMonthCsv } from '../js/data/export-month-csv.js';
 import { parseEntry } from '../src/parse-entry.js';
 
 /** The reference moment the seed is built around: 23 Nov 2026, 15:00 local. */
@@ -241,6 +251,82 @@ export function runCheck({ build = monthCsv, now = NOW, log = console.log, warn 
   return result.mismatches === 0 && result.missing === 0 && result.extra === 0 ? 0 : 1;
 }
 
+/**
+ * Whether saved CSV text starts with exactly one UTF-8 BOM, then the header
+ * row and a CRLF. A second BOM, or none, fails: the character after the BOM
+ * must be the header's first.
+ * @param {string} text  The file's text decoded with its BOM kept.
+ * @returns {boolean}
+ */
+export function bomOk(text) {
+  return typeof text === 'string' && text.startsWith(`${CSV_BOM}${CSV_HEADER}\r\n`);
+}
+
+/**
+ * Runs `save` (exportMonthCsv() by default) on `entries` with a fake page
+ * whose `createObjectURL` keeps the Blob, and returns the saved file's text
+ * decoded from its bytes with any leading BOM kept; `null` when nothing was
+ * saved or the bytes are not valid UTF-8.
+ * @param {{ save?: typeof exportMonthCsv, entries: object[], now: Date }} options
+ * @returns {Promise<string | null>}
+ */
+export async function downloadedCsv({ save = exportMonthCsv, entries, now }) {
+  const blobs = [];
+  const doc = {
+    body: { appendChild() {} },
+    createElement() {
+      return { setAttribute() {}, click() {}, remove() {} };
+    },
+  };
+  const url = {
+    createObjectURL(blob) {
+      blobs.push(blob);
+      return `blob:check-csv-exact/${blobs.length}`;
+    },
+    revokeObjectURL() {},
+  };
+  await save({ load: async () => entries, doc, url, now });
+  if (blobs.length !== 1) return null;
+  const bytes = await blobs[0].arrayBuffer();
+  try {
+    return new TextDecoder('utf-8', { ignoreBOM: true, fatal: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Saves the seeded spends through `save` (the Export CSV download), prints
+ * the CSV_BOM line and the CSV_DOWNLOAD line (and a line per problem on
+ * stderr) and resolves to the exit code.
+ * @param {{ save?: typeof exportMonthCsv, now?: Date,
+ *           log?: (line: string) => void, warn?: (line: string) => void }} [options]
+ * @returns {Promise<number>}  0 when the BOM and header are right and every
+ *   count is 0, otherwise 1.
+ */
+export async function runDownloadCheck({
+  save = exportMonthCsv, now = NOW, log = console.log, warn = console.error,
+} = {}) {
+  const records = seedSpends(now);
+  const entries = records.map(({ expected, ...entry }) => entry);
+  const text = await downloadedCsv({ save, entries, now });
+  const ok = bomOk(text);
+  if (text === null) {
+    warn('the Export CSV download saved no file, or a file that is not UTF-8');
+  } else if (!ok) {
+    warn(`the saved file starts ${JSON.stringify(text.slice(0, CSV_HEADER.length + 4))}, ` +
+      `want one U+FEFF, then ${JSON.stringify(CSV_HEADER)} and a CRLF`);
+  }
+  log(`CSV_BOM ok=${ok ? 1 : 0}`);
+
+  const result = compareCsv(text ?? '', records);
+  result.details.forEach((line) => warn(`download: ${line}`));
+  log(`CSV_DOWNLOAD mismatches=${result.mismatches} missing=${result.missing} extra=${result.extra}`);
+  return ok && result.mismatches === 0 && result.missing === 0 && result.extra === 0 ? 0 : 1;
+}
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  process.exitCode = runCheck();
+  const exact = runCheck();
+  const download = await runDownloadCheck();
+  process.exitCode = exact || download;
 }

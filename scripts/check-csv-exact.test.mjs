@@ -3,13 +3,17 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
-import { monthCsv } from '../src/csv-export.js';
+import { CSV_BOM, monthCsv } from '../src/csv-export.js';
+import { exportMonthCsv } from '../js/data/export-month-csv.js';
 import {
+  bomOk,
   cellToPaise,
   compareCsv,
+  downloadedCsv,
   NOW,
   parseCsv,
   runCheck,
+  runDownloadCheck,
   seedSpends,
 } from './check-csv-exact.mjs';
 
@@ -146,4 +150,93 @@ test('cellToPaise reads rupee cells as exact integer paise', () => {
   assert.equal(cellToPaise('45.555'), null);
   assert.equal(cellToPaise('1e3'), null);
   assert.equal(cellToPaise(''), null);
+});
+
+/* A save that writes `text(entries, now)` as the file, as exportCsv() would. */
+function savesText(text) {
+  return async ({ load, doc, url, now }) => {
+    const entries = await load({ now });
+    const href = url.createObjectURL(new Blob([text(entries, now)], { type: 'text/csv' }));
+    const link = doc.createElement('a');
+    link.click();
+    url.revokeObjectURL(href);
+    return { filename: 'rupee-ledger-2026-11.csv', count: entries.length };
+  };
+}
+
+async function quietDownload(save) {
+  const lines = [];
+  const code = await runDownloadCheck({ save, log: (line) => lines.push(line), warn: () => {} });
+  return { code, lines };
+}
+
+test('the Export CSV download starts with one BOM, the ₹ header and a CRLF', async () => {
+  const text = await downloadedCsv({ entries: entries(), now: NOW });
+  assert.ok(text.startsWith('﻿Date,Amount (₹),Category,Note\r\n'), JSON.stringify(text.slice(0, 40)));
+  assert.notEqual(text[1], '﻿');
+  assert.equal(bomOk(text), true);
+});
+
+test('the download’s bytes open with EF BB BF exactly once', async () => {
+  const text = await downloadedCsv({ entries: entries(), now: NOW });
+  const bytes = [...new TextEncoder().encode(text).slice(0, 6)];
+  assert.deepEqual(bytes, [0xef, 0xbb, 0xbf, 0x44, 0x61, 0x74]);
+});
+
+test('the real download prints CSV_BOM ok=1 and zero download mismatches', async () => {
+  assert.deepEqual(await quietDownload(exportMonthCsv), {
+    code: 0,
+    lines: ['CSV_BOM ok=1', 'CSV_DOWNLOAD mismatches=0 missing=0 extra=0'],
+  });
+});
+
+test('the downloaded text parses to the same rows as monthCsv', async () => {
+  const text = await downloadedCsv({ entries: entries(), now: NOW });
+  assert.deepEqual(parseCsv(text), parseCsv(monthCsv(entries(), NOW)));
+  assert.deepEqual(compareCsv(text, seedSpends(NOW)), {
+    mismatches: 0, missing: 0, extra: 0, details: [],
+  });
+});
+
+test('a download with no BOM prints CSV_BOM ok=0 and fails', async () => {
+  const result = await quietDownload(savesText((list, now) => monthCsv(list, now)));
+  assert.equal(result.code, 1);
+  assert.equal(result.lines[0], 'CSV_BOM ok=0');
+});
+
+test('a download with two BOMs prints CSV_BOM ok=0 and fails', async () => {
+  const result = await quietDownload(savesText((list, now) => CSV_BOM + CSV_BOM + monthCsv(list, now)));
+  assert.equal(result.code, 1);
+  assert.equal(result.lines[0], 'CSV_BOM ok=0');
+});
+
+test('a download whose header lost its ₹ prints CSV_BOM ok=0 and fails', async () => {
+  const result = await quietDownload(savesText(
+    (list, now) => CSV_BOM + monthCsv(list, now).replace('Amount (₹)', 'Amount (Rs)'),
+  ));
+  assert.equal(result.code, 1);
+  assert.equal(result.lines[0], 'CSV_BOM ok=0');
+});
+
+test('a download that saves no file prints CSV_BOM ok=0 and fails', async () => {
+  const result = await quietDownload(async () => ({ filename: 'none.csv', count: 0 }));
+  assert.equal(result.code, 1);
+  assert.equal(result.lines[0], 'CSV_BOM ok=0');
+});
+
+test('a download with a changed row passes the BOM but fails CSV_DOWNLOAD', async () => {
+  const result = await quietDownload(savesText(
+    (list, now) => CSV_BOM + monthCsv(list, now).replace('"tea, biscuits"', 'tea and biscuits'),
+  ));
+  assert.deepEqual(result, {
+    code: 1,
+    lines: ['CSV_BOM ok=1', 'CSV_DOWNLOAD mismatches=1 missing=0 extra=0'],
+  });
+});
+
+test('the script prints CSV_BOM ok=1 and exits 0', () => {
+  const run = spawnSync(process.execPath, [SCRIPT], { encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stdout, /^CSV_BOM ok=1$/m);
+  assert.match(run.stdout, /^CSV_DOWNLOAD mismatches=0 missing=0 extra=0$/m);
 });
