@@ -58,9 +58,9 @@
  * changes without it. Bump VERSION and paste the new digest together.
  */
 
-const VERSION = 'v18';
+const VERSION = 'v19';
 // sha-256 of the precached files' contents; see the note above and sw.test.js.
-const ASSETS_DIGEST = '543846db953bf534659140810eb9cfaef1b4178d3f430337b0b87e477ace34b9';
+const ASSETS_DIGEST = '431afccab74b809ac4fdf3d6517cb66448c21b85e07cbcd0c808613a1b002370';
 // Every cache this app has ever named starts with this, whatever its VERSION.
 const APP_CACHES = 'rupee-ledger-';
 const PREFIX = APP_CACHES + VERSION + '-';

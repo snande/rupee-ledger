@@ -1161,6 +1161,91 @@ test('a CSV export that throws at once still shows the error', async () => {
   assert.equal(screen.csvButton.disabled, false);
 });
 
+/* Export CSV touches nothing on the Today screen but its own button and
+   its own error: the re-rendered view, the load, the entry box, the chips
+   and Export backup are as they were before the taps. */
+test('three Export CSV taps leave the Today view as it was and load nothing again', async () => {
+  const screen = fakeScreenWithCsv();
+  const { ledger, load } = memoryLedger([chai(), { id: 8, amountPaise: 4550, note: 'auto', category: 'Transport', timestamp: now }]);
+  let loads = 0;
+  let csvCalls = 0;
+  const csv = async () => { csvCalls += 1; return { filename: 'rupee-ledger-2026-11.csv', count: 2 }; };
+  await mountToday({ main: screen.main, ledger, load: () => { loads += 1; return load(); }, csv });
+  const before = screen.view.innerHTML;
+  const status = screen.root.getAttribute('data-status');
+  const focused = screen.input.focusCount;
+  assert.match(before, /data-today-total>₹165.5</);
+  assert.match(before, /data-month-total>/);
+  assert.deepEqual(chips(before), { 7: 'Food', 8: 'Transport' });
+
+  for (let i = 0; i < 3; i += 1) {
+    screen.csvButton.dispatch('click');
+    await tick();
+  }
+
+  assert.equal(csvCalls, 3);
+  assert.equal(loads, 1, 'nothing is reloaded');
+  assert.equal(screen.view.innerHTML, before, 'totals, spend list and chips are unchanged');
+  assert.equal(screen.root.getAttribute('data-status'), status);
+  assert.equal(screen.input.focusCount, focused);
+  assert.equal(screen.input.value, '');
+  assert.equal(screen.hint.textContent, '');
+  assert.equal(screen.status.textContent, '');
+});
+
+test('after Export CSV taps a quick entry adds, a chip changes and Export backup downloads', async () => {
+  const screen = fakeScreenWithCsv();
+  const { ledger, load, calls } = memoryLedger([chai()]);
+  let backups = 0;
+  const backup = async () => { backups += 1; return { filename: 'rupee-ledger-backup-2026-11-25.json', count: 1 }; };
+  const csv = async () => ({ filename: 'rupee-ledger-2026-11.csv', count: 1 });
+  await mountToday({ main: screen.main, ledger, load, backup, csv });
+
+  for (let i = 0; i < 3; i += 1) {
+    screen.csvButton.dispatch('click');
+    await tick();
+  }
+
+  type(screen, '45.50 auto');
+  assert.match(screen.view.innerHTML, /data-today-total>₹165.5</);
+  assert.match(screen.view.innerHTML, /entry-new"><span class="entry-note">auto/);
+  assert.equal(screen.input.value, '');
+  await tick();
+  assert.equal(screen.status.textContent, 'Added ₹45.5 auto');
+
+  tapChip(screen.view, 7);
+  tapCategory(screen.view, 7, 'Health');
+  assert.deepEqual(calls, [[7, 'Health']]);
+  assert.equal(chips(screen.view.innerHTML)[7], 'Health');
+
+  screen.exportButton.dispatch('click');
+  await tick();
+  assert.equal(backups, 1);
+  assert.equal(screen.exportButton.disabled, false);
+  assert.equal(screen.exportStatus.getAttribute('hidden'), '');
+});
+
+test('an Export backup error stays shown after a successful Export CSV tap', async () => {
+  const screen = fakeScreenWithCsv();
+  const backup = async () => { throw new Error('The ledger read was aborted.'); };
+  let finish;
+  const csv = () => new Promise((resolve) => { finish = resolve; });
+  await mountToday({ main: screen.main, load: async () => sample, ledger: keep, backup, csv });
+
+  screen.exportButton.dispatch('click');
+  await tick();
+  assert.equal(screen.exportStatus.textContent, EXPORT_ERROR);
+
+  screen.csvButton.dispatch('click');
+  assert.equal(screen.exportStatus.textContent, EXPORT_ERROR, 'the tap does not wipe it');
+  assert.equal(screen.exportStatus.getAttribute('hidden'), null);
+  finish({ filename: 'rupee-ledger-2026-11.csv', count: 2 });
+  await tick();
+  assert.equal(screen.exportStatus.textContent, EXPORT_ERROR);
+  assert.equal(screen.exportStatus.getAttribute('hidden'), null);
+  assert.equal(screen.csvButton.disabled, false);
+});
+
 /* With no `csv` injected, Export CSV downloads this month's spends from the
    on-device store as rows under the header, not a header-only file: the
    default is exportMonthCsv(), as on the Backup screen. */
