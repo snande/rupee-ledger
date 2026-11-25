@@ -5,10 +5,11 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { exportMonthCsv } from './export-month-csv.js';
+import { exportMonthCsv, frozenSnapshot } from './export-month-csv.js';
 import { loadEntries } from './ledger.js';
 import { add, closeLedger } from '../../src/ledger.js';
-import { CSV_BOM, MONTH_CSV_HEADER } from '../../src/csv-export.js';
+import { CSV_BOM, MONTH_CSV_HEADER, monthCsv } from '../../src/csv-export.js';
+import { listEntries, updateCategory } from '../../src/ledger/store.js';
 import { compareCsv, seedSpends, NOW as SEED_NOW } from '../../scripts/check-csv-exact.mjs';
 import { totals } from '../../src/totals.js';
 import { createFakeIndexedDB, FakeIDBKeyRange } from '../../src/ledger/fake-indexeddb.js';
@@ -168,4 +169,91 @@ test('the exported text, BOM included, passes the CSV_EXACT check', async () => 
   assert.equal(result.count, records.filter((record) => record.expected).length);
   const { mismatches, missing, extra } = compareCsv(text, records);
   assert.deepEqual({ mismatches, missing, extra }, { mismatches: 0, missing: 0, extra: 0 });
+});
+
+/* Every stored record's fields the export must leave alone, in store order. */
+const storedLedger = async () =>
+  (await listEntries()).map(({ id, amountPaise, note, category, createdAt }) =>
+    ({ id, amountPaise, note, category, createdAt }));
+
+test('three exports leave the stored ledger exactly as it was and save the same file each time', async () => {
+  await add({ amountPaise: 12000, note: 'chai', createdAt: new Date(2026, 10, 4, 9).getTime() });
+  await add({ amountPaise: 4550, note: 'auto, "shared"', createdAt: new Date(2026, 10, 5, 8).getTime() });
+  await add({ amountPaise: 99900, note: 'rent share', createdAt: new Date(2026, 9, 30, 20).getTime() });
+  const stored = await add({ amountPaise: 30000, note: 'groceries', createdAt: new Date(2026, 10, 2, 18).getTime() });
+  await updateCategory(stored.id, 'Food');
+
+  const before = await storedLedger();
+  assert.equal(before.length, 4);
+
+  const texts = [];
+  for (let run = 0; run < 3; run += 1) {
+    const page = fakePage();
+    const result = await exportMonthCsv({ doc: page.doc, url: page.url, now: NOW });
+    assert.deepEqual(result, { filename: 'rupee-ledger-2026-11.csv', count: 3 });
+    assert.deepEqual(page.names, ['rupee-ledger-2026-11.csv']);
+    texts.push(await rawCsvOf(page));
+    assert.deepEqual(await storedLedger(), before);
+  }
+
+  assert.ok(texts[0].startsWith(CSV_BOM + MONTH_CSV_HEADER + '\r\n'));
+  assert.equal(texts[1], texts[0]);
+  assert.equal(texts[2], texts[0]);
+  assert.deepEqual(await storedLedger(), before);
+});
+
+test('the rows are built from a frozen copy of the loaded spends', async () => {
+  const loaded = [
+    { id: 1, amountPaise: 2500, note: 'bus', category: 'Travel', timestamp: new Date(2026, 10, 1, 7).getTime() },
+    { id: 2, amountPaise: 12000, note: 'chai', category: 'Food', timestamp: new Date(2026, 10, 3, 9).getTime() },
+  ];
+  const copy = structuredClone(loaded);
+  const seen = [];
+  const page = fakePage();
+  await exportMonthCsv({
+    load: async () => loaded,
+    csv: (entries, at) => {
+      seen.push(entries);
+      assert.throws(() => entries.push({}), TypeError);
+      assert.throws(() => { entries[0].note = 'changed'; }, TypeError);
+      return monthCsv(entries, at);
+    },
+    doc: page.doc,
+    url: page.url,
+    now: NOW,
+  });
+
+  assert.equal(seen.length, 1);
+  const [entries] = seen;
+  assert.ok(Object.isFrozen(entries));
+  assert.ok(entries.every((entry) => Object.isFrozen(entry)));
+  assert.notEqual(entries, loaded);
+  entries.forEach((entry, index) => assert.notEqual(entry, loaded[index]));
+  assert.deepEqual([...entries], copy);
+  assert.deepEqual(loaded, copy);
+  assert.ok(!Object.isFrozen(loaded) && !Object.isFrozen(loaded[0]));
+  assert.equal(await csvOf(page), MONTH_CSV_HEADER + '\r\n2026-11-01,25,Travel,bus\r\n2026-11-03,120,Food,chai');
+});
+
+test('the default rows are monthCsv() over the frozen spends, unchanged', async () => {
+  const page = fakePage();
+  await exportMonthCsv({
+    load: async () => [{ amountPaise: 2500, note: 'bus', category: 'Travel', timestamp: new Date(2026, 10, 1, 7).getTime() }],
+    doc: page.doc,
+    url: page.url,
+    now: NOW,
+  });
+  assert.equal(await rawCsvOf(page), CSV_BOM + MONTH_CSV_HEADER + '\r\n2026-11-01,25,Travel,bus');
+});
+
+test('frozenSnapshot freezes a new list of copied entries and passes a non-list through', () => {
+  const entry = { id: 7, amountPaise: 100, note: 'tea' };
+  const snapshot = frozenSnapshot([entry]);
+  assert.ok(Object.isFrozen(snapshot) && Object.isFrozen(snapshot[0]));
+  assert.notEqual(snapshot[0], entry);
+  assert.deepEqual(snapshot[0], entry);
+  assert.ok(!Object.isFrozen(entry));
+  assert.equal(frozenSnapshot(null), null);
+  const notAList = { length: 0 };
+  assert.equal(frozenSnapshot(notAList), notAList);
 });
