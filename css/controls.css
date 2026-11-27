@@ -191,7 +191,9 @@ label {
 
 /* The Today and This month total cards: side by side even on a 360px
    screen, each a 12px muted label above a 28px mono amount. Both columns may
-   shrink and the amount may wrap, so a very large total stays on screen.
+   shrink, and a total too wide for its card wraps only after a digit-group
+   comma (the <wbr> formatPaiseHtml() puts there), so ₹1,23,615.05 reads
+   ₹1,23, / 615.05 on a phone and never splits between two digits.
    Today's card carries the haldi rule, the screen's one emphasis. */
 .today-totals {
   display: grid;
@@ -223,7 +225,14 @@ label {
   font-size: var(--text-5);
   font-weight: var(--weight-strong);
   line-height: var(--leading-tight);
-  overflow-wrap: anywhere;
+  overflow-wrap: normal;
+}
+
+/* A digit-group comma in a total: set in the UI face, so it takes a comma's
+   width rather than a whole mono digit cell and the digits sit together. */
+.amount-comma {
+  font-family: var(--font-ui);
+  font-weight: var(--weight-regular);
 }
 
 /* After a failed load the sums are not known: a muted dash, not a ₹0. */

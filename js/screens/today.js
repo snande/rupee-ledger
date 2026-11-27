@@ -22,7 +22,7 @@
 
 import { exportBackup } from '../../src/backup-download.js';
 import { CATEGORIES } from '../../src/categorise.js';
-import { formatPaise } from '../../src/format-amount.js';
+import { formatPaise, formatPaiseHtml } from '../../src/format-amount.js';
 import { parseEntry } from '../../src/parse-entry.js';
 import { INVALID_HINT, showHint, spendLabel, wireQuickEntry } from '../../src/quick-entry.js';
 import { totals } from '../../src/totals.js';
@@ -142,7 +142,7 @@ function totalCard(key, label, paise, known, extra = '') {
     value = '<span class="amount total-amount total-unknown" data-' + key + '-total aria-hidden="true">—</span>' +
       '<span class="visually-hidden">not known</span>';
   } else {
-    value = '<span class="amount total-amount" data-' + key + '-total>' + formatPaise(paise) + '</span>';
+    value = '<span class="amount total-amount" data-' + key + '-total>' + formatPaiseHtml(paise) + '</span>';
   }
   return '<p class="card total-card' + (key === 'today' ? ' total-card-today' : '') + '">' +
     '<span class="total-label">' + label + '</span>' +

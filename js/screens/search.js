@@ -17,7 +17,7 @@
  */
 
 import { searchEntries } from '../../src/search.js';
-import { formatPaise } from '../../src/format-amount.js';
+import { formatPaise, formatPaiseHtml } from '../../src/format-amount.js';
 import { loadAllEntries } from '../data/ledger.js';
 import { escapeHtml } from './today.js';
 
@@ -64,7 +64,7 @@ function matchRow(entry) {
 function totalView(paise, count) {
   return '<p class="card total-card search-total">' +
     '<span class="total-label">' + TOTAL_LABEL + ' <span class="search-count">(' + matchCount(count) + ')</span></span>' +
-    '<span class="amount total-amount" data-search-total>' + formatPaise(paise) + '</span>' +
+    '<span class="amount total-amount" data-search-total>' + formatPaiseHtml(paise) + '</span>' +
   '</p>';
 }
 
