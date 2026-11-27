@@ -34,12 +34,24 @@ const ENTRIES = [
 ];
 
 const filled = (entries, month = '2026-09') => renderMonthView({ status: 'filled', entries, month, now: NOW });
-const total = (html) => (html.match(/data-month-total>([^<]*)</) ?? [])[1];
+/* The total's text, with the comma spans and <wbr>s that formatPaiseHtml()
+   puts between digit groups taken out. */
+const COMMA = /<span class="amount-comma">,<\/span><wbr>/g;
+const total = (html) => (html.match(new RegExp('data-month-total>((?:[^<]|' + COMMA.source + ')*)<')) ?? [])[1]?.replace(COMMA, ',');
 const legendAmounts = (html) => [...html.matchAll(/data-legend-amount>([^<]*)</g)].map((m) => m[1]);
 const legendNames = (html) => [...html.matchAll(/<li class="month-legend-row" data-category="([^"]*)"/g)].map((m) => m[1]);
 const sliceNames = (html) => [...html.matchAll(/<path class="month-slice[^"]*" d="[^"]+" data-slice="([^"]*)"/g)].map((m) => m[1]);
 const rupeesToPaise = (text) => Math.round(Number(text.replace(/[₹,]/g, '')) * 100);
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+test('a month total in lakhs breaks only after a digit-group comma', () => {
+  const html = filled([
+    { id: 1, amountPaise: 12345000, note: 'rent', category: 'Bills', timestamp: at(9, 1) },
+    { id: 2, amountPaise: 16505, note: 'chai', category: 'Food', timestamp: at(9, 3) },
+  ]);
+  assert.equal(total(html), '₹1,23,615.05');
+  assert.ok(html.includes('data-month-total>₹1<span class="amount-comma">,</span><wbr>23<span class="amount-comma">,</span><wbr>615.05</span>'));
+});
 
 test('the month total and the legend come from categoryTotalsForMonth and add up exactly', () => {
   const html = filled(ENTRIES);

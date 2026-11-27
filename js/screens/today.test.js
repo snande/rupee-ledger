@@ -596,13 +596,15 @@ test('a total in lakhs breaks only at a digit-group comma, with narrow commas', 
   for (const [key, groups] of [['today', ['₹1', '23', '615.05']], ['month', ['₹1', '23', '780.55']]]) {
     const amount = html.match(new RegExp('data-' + key + '-total>(.*?)</span>(?:</p>|<a )'))[1];
     assert.equal(amount, groups.join('<span class="amount-comma">,</span><wbr>'), key + ' card');
-    assert.doesNotMatch(amount.replace(/<[^>]+>/g, ''), /\d<|[^\d,.₹]/, key + ' card has only digits, commas and the point');
+    assert.doesNotMatch(amount.replace(COMMA, ''), /</, key + ' card has no tag but the comma markup');
   }
 
   const css = await readFile(new URL('../../css/controls.css', import.meta.url), 'utf8');
   const rule = (selector) => css.match(new RegExp('\\n' + selector.replace('.', '\\.') + ' \\{([^}]*)\\}'))[1];
-  assert.match(rule('.total-amount'), /overflow-wrap: normal;/, 'no break between two digits');
+  assert.match(rule('.total-amount'), /overflow-wrap: break-word;/, 'breaks inside a group only when it cannot fit');
   assert.doesNotMatch(rule('.total-amount'), /anywhere|break-all/);
+  assert.match(rule('.amount'), /font-family: var\(--font-mono\);/, 'the digits stay in mono');
+  assert.match(rule('.amount'), /font-variant-numeric: tabular-nums;/);
   assert.match(rule('.amount-comma'), /font-family: var\(--font-ui\);/, 'a comma takes a comma’s width');
 });
 
