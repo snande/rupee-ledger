@@ -17,7 +17,7 @@
  */
 
 import { categoryTotalsForMonth, UNCATEGORISED } from '../../src/category-totals.js';
-import { formatPaise } from '../../src/format-amount.js';
+import { formatPaise, formatPaiseHtml } from '../../src/format-amount.js';
 import { loadMonthEntries } from '../data/ledger.js';
 import { isMonthId, monthId, monthLabel } from './compare.js';
 import { escapeHtml } from './today.js';
@@ -136,7 +136,7 @@ function legendView(rows, total, slices) {
 
 function totalView(id, paise, known) {
   const value = known
-    ? '<span class="amount total-amount" data-month-total>' + formatPaise(paise) + '</span>'
+    ? '<span class="amount total-amount" data-month-total>' + formatPaiseHtml(paise) + '</span>'
     : '<span class="skeleton-bar total-skeleton" aria-hidden="true"></span>';
   return '<p class="card total-card month-total-card"' + (known ? '' : ' aria-busy="true"') + '>' +
     '<span class="total-label">' + escapeHtml(monthLabel(id)) + '</span>' +

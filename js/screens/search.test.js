@@ -30,7 +30,10 @@ const CHAI_NOTES = ['chai &amp; biscuit', 'Masala Chai', 'chai'];
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
 const notes = (html) => [...html.matchAll(/<span class="entry-note">([^<]*)<\/span>/g)].map((m) => m[1]);
-const totalOf = (html) => html.match(/<span class="amount total-amount" data-search-total>([^<]*)<\/span>/)?.[1];
+/* The total's text, with the comma spans and <wbr>s that formatPaiseHtml()
+   puts between digit groups taken out. */
+const COMMA = /<span class="amount-comma">,<\/span><wbr>/g;
+const totalOf = (html) => html.match(new RegExp('<span class="amount total-amount" data-search-total>((?:[^<]|' + COMMA.source + ')*)<\\/span>'))?.[1].replace(COMMA, ',');
 
 /* Just enough of the rendered screen for mountSearch. */
 function fakeScreen(value = '') {
@@ -110,6 +113,16 @@ test('the total of the matches is shown in ₹ and labelled as such', () => {
   assert.ok(html.includes(TOTAL_LABEL), 'labelled as the total of the matches');
   assert.match(TOTAL_LABEL, /total of matches/i);
   assert.match(html, /\(3 matches\)/);
+});
+
+test('a total of matches in lakhs breaks only after a digit-group comma', () => {
+  const entries = [
+    { id: 1, amountPaise: 12345000, note: 'chai stall rent', category: 'Bills', timestamp: at(9, 1) },
+    { id: 2, amountPaise: 16505, note: 'chai', category: 'Food', timestamp: at(9, 2) },
+  ];
+  const html = renderSearchView({ status: 'filled', entries, query: 'chai' });
+  assert.equal(totalOf(html), '₹1,23,615.05');
+  assert.ok(html.includes('data-search-total>₹1<span class="amount-comma">,</span><wbr>23<span class="amount-comma">,</span><wbr>615.05</span>'));
 });
 
 test('matchCount says 1 match or N matches', () => {

@@ -197,7 +197,7 @@ test('each status renders its own distinct view', () => {
 
   assert.match(views.filled, /class="entry-list"/);
   assert.match(views.filled, /Electricity top-up<\/span><span class="amount entry-amount">₹1,245<\/span>/);
-  assert.match(views.filled, /data-today-total>₹1,290.5</);
+  assert.match(views.filled, /data-today-total>₹1<span class="amount-comma">,<\/span><wbr>290.5</);
   assert.match(views.filled, /2 spends/);
 });
 
@@ -375,7 +375,7 @@ test('a spend added during an error stays listed across Try again, and the total
   await tick();
   assert.equal(calls, 3);
   assert.equal(screen.root.getAttribute('data-status'), 'filled');
-  assert.match(screen.view.innerHTML, /data-today-total>₹1,410.5</);
+  assert.match(screen.view.innerHTML, /data-today-total>₹1<span class="amount-comma">,<\/span><wbr>410.5</);
   assert.match(screen.view.innerHTML, /3 spends/);
   assert.doesNotMatch(screen.view.innerHTML, /today-error/);
 });
@@ -473,7 +473,7 @@ test('a spend added while loading shows at once and joins the loaded ones', asyn
 
   resolve(sample);
   await ready;
-  assert.match(screen.view.innerHTML, /data-today-total>₹1,410.5</);
+  assert.match(screen.view.innerHTML, /data-today-total>₹1<span class="amount-comma">,<\/span><wbr>410.5</);
   assert.doesNotMatch(screen.view.innerHTML, /aria-busy/);
 });
 
@@ -500,8 +500,12 @@ test('mountToday throws on markup without the screen, so the router shows its er
 
 /* ---------- Today and This month totals ---------- */
 
-const today = (html) => (html.match(/data-today-total[^>]*>([^<]*)</) ?? [])[1];
-const month = (html) => (html.match(/data-month-total[^>]*>([^<]*)</) ?? [])[1];
+/* A total's text: its digits, with the comma spans and <wbr>s that
+   formatPaiseHtml() puts between digit groups taken out. */
+const COMMA = /<span class="amount-comma">,<\/span><wbr>/g;
+const totalText = (key) => (html) => (html.match(new RegExp('data-' + key + '-total[^>]*>((?:[^<]|' + COMMA.source + ')*)<')) ?? [])[1]?.replace(COMMA, ',');
+const today = totalText('today');
+const month = totalText('month');
 
 test('an empty ledger shows both totals as ₹0, labelled Today and This month', async () => {
   const screen = fakeScreen();
@@ -575,6 +579,33 @@ test('saving 120 chai then 80 auto shows ₹200 today and ₹200 this month, in 
   assert.deepEqual(saved.map((entry) => [entry.amountPaise, entry.note]), [[12000, 'chai'], [8000, 'auto']]);
   assert.ok(saved.every((entry) => typeof entry.createdAt === 'number'));
   assert.deepEqual(Object.keys(saved[0]).sort(), ['amountPaise', 'createdAt', 'note']);
+});
+
+/* A total in lakhs on a phone: each card's amount may wrap only after a
+   digit-group comma, never between two digits, and the commas are set in the
+   narrow UI face rather than a whole mono digit cell. */
+test('a total in lakhs breaks only at a digit-group comma, with narrow commas', async () => {
+  const at = new Date(2026, 8, 30, 10, 0);
+  const entries = [
+    { id: 1, amountPaise: 12361505, note: 'rent', timestamp: at.getTime() },
+    { id: 2, amountPaise: 16550, note: 'groceries', timestamp: new Date(2026, 8, 2, 9, 0).getTime() },
+  ];
+  const html = renderTodayView({ status: 'filled', entries, now: at });
+  assert.equal(today(html), '₹1,23,615.05');
+  assert.equal(month(html), '₹1,23,780.55');
+  for (const [key, groups] of [['today', ['₹1', '23', '615.05']], ['month', ['₹1', '23', '780.55']]]) {
+    const amount = html.match(new RegExp('data-' + key + '-total>(.*?)</span>(?:</p>|<a )'))[1];
+    assert.equal(amount, groups.join('<span class="amount-comma">,</span><wbr>'), key + ' card');
+    assert.doesNotMatch(amount.replace(COMMA, ''), /</, key + ' card has no tag but the comma markup');
+  }
+
+  const css = await readFile(new URL('../../css/controls.css', import.meta.url), 'utf8');
+  const rule = (selector) => css.match(new RegExp('\\n' + selector.replace('.', '\\.') + ' \\{([^}]*)\\}'))[1];
+  assert.match(rule('.total-amount'), /overflow-wrap: break-word;/, 'breaks inside a group only when it cannot fit');
+  assert.doesNotMatch(rule('.total-amount'), /anywhere|break-all/);
+  assert.match(rule('.amount'), /font-family: var\(--font-mono\);/, 'the digits stay in mono');
+  assert.match(rule('.amount'), /font-variant-numeric: tabular-nums;/);
+  assert.match(rule('.amount-comma'), /font-family: var\(--font-ui\);/, 'a comma takes a comma’s width');
 });
 
 test('the month total counts earlier days of the month; today counts only today', () => {

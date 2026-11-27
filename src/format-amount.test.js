@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 
-import { formatPaise } from './format-amount.js';
+import { formatPaise, formatPaiseHtml } from './format-amount.js';
 
 test('whole rupees show no paise', () => {
   assert.equal(formatPaise(12000), '₹120');
@@ -29,6 +29,22 @@ test('zero is ₹0 and every non-negative amount starts with ₹, ready for a si
 
 test('the same input always gives the same output', () => {
   assert.equal(formatPaise(4550), formatPaise(4550));
+});
+
+test('a total as HTML marks each digit-group comma as a narrow span with a break after it', () => {
+  const comma = '<span class="amount-comma">,</span><wbr>';
+  assert.equal(formatPaiseHtml(12361505), '₹1' + comma + '23' + comma + '615.05');
+  assert.equal(formatPaiseHtml(1234567800), '₹1' + comma + '23' + comma + '45' + comma + '678');
+  assert.equal(formatPaiseHtml(12000), '₹120', 'no comma, no markup');
+  assert.equal(formatPaiseHtml(0), '₹0');
+});
+
+test('a total as HTML reads as exactly formatPaise once its tags are taken out', () => {
+  for (const paise of [0, 1, 4550, 99900, 12345000, 12361505, 12378055, 1234567805]) {
+    const html = formatPaiseHtml(paise);
+    assert.equal(html.replace(/<[^>]+>/g, ''), formatPaise(paise), String(paise));
+    assert.doesNotMatch(html.replace(/<span class="amount-comma">,<\/span><wbr>/g, ''), /,/, 'every comma is marked up');
+  }
 });
 
 test('the module is dependency-free and does no I/O', async () => {
